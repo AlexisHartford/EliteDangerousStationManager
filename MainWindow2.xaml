@@ -4,7 +4,8 @@
         Title="Elite Dangerous Station Manager | Colonial Operations Command" 
         Height="900" Width="1400"
         Background="#FF0A0A0A"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        Loaded="Window_Loaded">
 
     <Window.Resources>
         <!-- Styles -->
@@ -164,19 +165,21 @@
                 <Button Grid.Column="1" 
                        Content="REFRESH" 
                        Style="{StaticResource ButtonStyle}" 
+                       Click="RefreshButton_Click" 
                        Margin="10,0"/>
 
                 <Button Grid.Column="2" 
                        Content="PROCESS JOURNAL" 
                        Style="{StaticResource ButtonStyle}" 
                        Background="#FF00AAFF"
+                       Click="ProcessJournalButton_Click" 
                        Margin="10,0"/>
 
                 <Button Grid.Column="3" 
-                       Content="Settings" 
+                       Content="TEST PROJECT" 
                        Style="{StaticResource ButtonStyle}" 
                        Background="#FF00FF88"
-                       Click="OpenSettings_Click"
+                       Click="CreateTestProjectButton_Click" 
                        Margin="10,0"/>
             </Grid>
         </Border>

@@ -1,0 +1,39 @@
+<Window x:Class="EliteDangerousStationManager.OverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="OverlayWindow"
+        Width="300" Height="200"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        WindowStartupLocation="Manual"
+        Loaded="Window_Loaded"
+        Name="OverlayRoot">
+
+    <Border Background="#AA000000" CornerRadius="10" Padding="8">
+        <StackPanel>
+            <TextBlock Text="Materials Needed:"
+                       Foreground="White"
+                       FontSize="14"
+                       FontWeight="Bold"
+                       Margin="0 0 0 6"/>
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Height="160
+                          ">
+                <ItemsControl x:Name="OverlayMaterialsList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal" Margin="0 2">
+                                <TextBlock Text="{Binding Material}" Foreground="White" FontSize="13"/>
+                                <TextBlock Text=" - Needed: " Foreground="White" FontSize="13"/>
+                                <TextBlock Text="{Binding Needed}" Foreground="White" FontSize="13"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </StackPanel>
+    </Border>
+</Window>
