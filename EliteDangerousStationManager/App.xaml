@@ -3,11 +3,16 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
-        <!-- Global Styles -->
+
+        <!-- ✅ Highlight colors (dynamic) -->
+        <SolidColorBrush x:Key="HighlightBrush" Color="#FFFF6B35" />
+        <SolidColorBrush x:Key="HighlightOverlayBrush" Color="#22FF6B35" />
+
+        <!-- ✅ Global styles -->
         <Style TargetType="ScrollBar">
             <Setter Property="Background" Value="#FF1A1A1A"/>
             <Setter Property="BorderBrush" Value="#FF333333"/>
-            <Setter Property="Foreground" Value="#FFFF6B35"/>
+            <Setter Property="Foreground" Value="{DynamicResource HighlightBrush}"/>
         </Style>
 
         <Style TargetType="DataGrid">
@@ -28,5 +33,21 @@
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding" Value="8"/>
         </Style>
+
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Padding" Value="10"/>
+        </Style>
+
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource HighlightBrush}" />
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Padding" Value="10,5"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+
     </Application.Resources>
 </Application>

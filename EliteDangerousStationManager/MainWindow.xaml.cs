@@ -22,6 +22,8 @@ namespace EliteDangerousStationManager
     public partial class MainWindow : Window, INotifyPropertyChanged
     {
         private readonly ProjectDatabaseService projectDb;
+        
+
         private readonly JournalProcessor journalProcessor;
         private readonly OverlayManager overlayManager;
         private readonly string connectionString = ConfigurationManager.ConnectionStrings["EliteDB"].ConnectionString;
@@ -65,6 +67,29 @@ namespace EliteDangerousStationManager
         public MainWindow()
         {
             InitializeComponent();
+            string configPath = "settings.config";
+            if (File.Exists(configPath))
+            {
+                var lines = File.ReadAllLines(configPath);
+                if (lines.Length > 1)
+                {
+                    string color = lines[1];
+                    try
+                    {
+                        var parsedColor = (Color)ColorConverter.ConvertFromString(color);
+                        Application.Current.Resources["HighlightBrush"] = new SolidColorBrush(parsedColor);
+                        Application.Current.Resources["HighlightOverlayBrush"] = new SolidColorBrush(Color.FromArgb(0x22, parsedColor.R, parsedColor.G, parsedColor.B));
+                    }
+                    catch
+                    {
+                        Application.Current.Resources["HighlightBrush"] = new SolidColorBrush(Colors.Orange);
+                        Application.Current.Resources["HighlightOverlayBrush"] = new SolidColorBrush(Color.FromArgb(0x22, 255, 140, 0)); // semi-transparent
+                    }
+                }
+            }
+        
+    
+
             DataContext = this;
 
             string journalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -146,9 +171,20 @@ namespace EliteDangerousStationManager
 
 
 
-        private void LoadProjects()
+        private void LoadProjects(string filter = "", int filterMode = 0)
         {
             var loaded = projectDb.LoadProjects();
+
+            // Apply filtering if needed
+            if (!string.IsNullOrWhiteSpace(filter))
+            {
+                string keyword = filter.ToLower();
+                loaded = loaded.Where(p =>
+                    (filterMode == 0 && p.StationName.ToLower().Contains(keyword)) ||
+                    (filterMode == 1 && (p.CreatedBy?.ToLower().Contains(keyword) ?? false))
+                ).ToList();
+            }
+
             Projects.Clear();
             foreach (var p in loaded)
                 Projects.Add(p);
@@ -163,6 +199,21 @@ namespace EliteDangerousStationManager
                 SelectedProject = proj; // <- This triggers LoadMaterialsForProject
             }
         }
+        private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            string keyword = SearchBox.Text.ToLower();
+            int mode = SearchMode.SelectedIndex;
+
+            var filtered = projectDb.LoadProjects().Where(p =>
+                (mode == 0 && p.StationName.ToLower().Contains(keyword)) ||
+                (mode == 1 && (p.CreatedBy?.ToLower().Contains(keyword) ?? false))
+            );
+
+            Projects.Clear();
+            foreach (var proj in filtered)
+                Projects.Add(proj);
+        }
+
 
         private void LoadMaterialsForProject(Project project)
         {
@@ -220,7 +271,7 @@ namespace EliteDangerousStationManager
 
                 if (project.ConstructionComplete && project.ResourcesRequired.All(r => r.ProvidedAmount >= r.RequiredAmount))
                 {
-                    projectDb.DeleteProject(marketId);
+                    projectDb.ArchiveProject(marketId);
                     Logger.Log($"Project complete at MarketID {marketId}. Removed.", "Success");
                 }
                 else
@@ -229,7 +280,8 @@ namespace EliteDangerousStationManager
                     {
                         MarketId = marketId,
                         SystemName = system,
-                        StationName = station
+                        StationName = station,
+                        CreatedBy = CommanderName ?? "Unknown"
                     });
 
                     using var conn = new MySqlConnection(connectionString);
@@ -287,7 +339,26 @@ namespace EliteDangerousStationManager
             if (settingsWindow.ShowDialog() == true)
             {
                 var key = settingsWindow.InaraApiKey;
-                Logger.Log("INARA API Key updated by user.", "Success");
+                var color = settingsWindow.HighlightColor;
+
+                // Apply user-defined highlight color
+                try
+                {
+                    var parsedColor = (Color)ColorConverter.ConvertFromString(color);
+                    var solidBrush = new SolidColorBrush(parsedColor);
+                    var overlayBrush = new SolidColorBrush(Color.FromArgb(0x22, parsedColor.R, parsedColor.G, parsedColor.B));
+
+                    Application.Current.Resources["HighlightBrush"] = solidBrush;
+                    Application.Current.Resources["HighlightOverlayBrush"] = overlayBrush;
+                }
+                catch
+                {
+                    Application.Current.Resources["HighlightBrush"] = new SolidColorBrush(Colors.Orange);
+                    Application.Current.Resources["HighlightOverlayBrush"] = new SolidColorBrush(Color.FromArgb(0x22, 255, 140, 0)); // semi-transparent
+                }
+
+
+                Logger.Log("Settings updated.", "Success");
 
                 inaraService = new InaraService(
                     CommanderName ?? "UnknownCommander",
@@ -299,6 +370,8 @@ namespace EliteDangerousStationManager
                 inaraService.Start();
             }
         }
+
+
         private void StartTimer()
         {
             timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
@@ -314,6 +387,13 @@ namespace EliteDangerousStationManager
 
             timer.Start();
         }
+        private void OpenArchive_Click(object sender, RoutedEventArgs e)
+        {
+            var archiveWindow = new ArchiveWindow(projectDb);
+            archiveWindow.Owner = this;
+            archiveWindow.Show();
+        }
+
 
         public event PropertyChangedEventHandler PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string name = null) =>

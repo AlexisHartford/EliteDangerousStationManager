@@ -9,6 +9,9 @@ namespace EliteDangerousStationManager
         private const string ConfigFile = "settings.config";
 
         public string InaraApiKey { get; private set; }
+        public string HighlightColor => ColorInput.Text.Trim();
+
+
 
         public SettingsWindow()
         {
@@ -20,16 +23,24 @@ namespace EliteDangerousStationManager
         {
             if (File.Exists(ConfigFile))
             {
-                var key = File.ReadAllText(ConfigFile);
-                ApiKeyTextBox.Text = key;
+                var lines = File.ReadAllLines(ConfigFile);
+                if (lines.Length > 0) ApiKeyTextBox.Text = lines[0];
+                if (lines.Length > 1) ColorInput.Text = lines[1]; // highlight color
             }
         }
 
         private void SaveSettings()
         {
-            File.WriteAllText(ConfigFile, ApiKeyTextBox.Text.Trim());
+            File.WriteAllLines(ConfigFile, new[]
+            {
+                ApiKeyTextBox.Text.Trim(),
+                ColorInput.Text.Trim()
+            });
+
             InaraApiKey = ApiKeyTextBox.Text.Trim();
         }
+
+
 
         private void SaveButton_Click(object sender, RoutedEventArgs e)
         {

@@ -8,6 +8,8 @@ namespace EliteDangerousStationManager.Models
         public long MarketId { get; set; }
         public string SystemName { get; set; }
         public string StationName { get; set; }
+        public string CreatedBy { get; set; }
+        public DateTime CreatedAt { get; set; } 
 
         public event PropertyChangedEventHandler PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string name = null) =>

@@ -9,7 +9,7 @@
     <Window.Resources>
         <!-- Styles -->
         <Style x:Key="HeaderTextStyle" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#FFFF6B35"/>
+            <Setter Property="Foreground" Value="{DynamicResource HighlightBrush}"/>
             <Setter Property="FontWeight" Value="Bold"/>
             <Setter Property="FontSize" Value="16"/>
         </Style>
@@ -23,7 +23,7 @@
         </Style>
 
         <Style x:Key="ButtonStyle" TargetType="Button">
-            <Setter Property="Background" Value="#FFFF6B35"/>
+            <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="15,8"/>
@@ -80,7 +80,7 @@
                                     <Setter Property="Foreground" Value="#FFFFCC00"/>
                                 </DataTrigger>
                                 <DataTrigger Binding="{Binding Type}" Value="Error">
-                                    <Setter Property="Foreground" Value="#FFFF6B35"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource HighlightBrush}"/>
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
@@ -106,7 +106,7 @@
                 <TextBlock Text="STATION MANAGER" 
                           FontSize="36" 
                           FontWeight="Bold" 
-                          Foreground="#FFFF6B35" 
+                          Foreground="{DynamicResource HighlightBrush}"
                           HorizontalAlignment="Center"/>
                 <TextBlock Text="COLONIAL OPERATIONS COMMAND" 
                           FontSize="14" 
@@ -155,11 +155,13 @@
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock x:Name="CommanderNameTextBlock"
                Text="Commander: (loading...)"
-               Foreground="#FFFF6B35"
+               Foreground="{DynamicResource HighlightBrush}"
                FontWeight="Bold"
                VerticalAlignment="Center"
                Margin="0,0,10,0"/>
                 </StackPanel>
+                
+                
 
                 <Button Grid.Column="1" 
                        Content="REFRESH" 
@@ -167,8 +169,10 @@
                        Margin="10,0"/>
 
                 <Button Grid.Column="2" 
-                       Content="PROCESS JOURNAL" 
+                       Content="View Archive" 
                        Style="{StaticResource ButtonStyle}" 
+                        
+                       Click="OpenArchive_Click"
                        Background="#FF00AAFF"
                        Margin="10,0"/>
 
@@ -204,9 +208,7 @@
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        <Border Grid.Row="0" 
-               Background="#22FF6B35" 
-               Padding="15">
+                        <Border Grid.Row="0" Background="{DynamicResource HighlightOverlayBrush}" Padding="15">
                             <TextBlock Text="CURRENT CARGO" Style="{StaticResource HeaderTextStyle}"/>
                         </Border>
 
@@ -228,7 +230,7 @@
                             <!-- Apply same header style as Required Materials -->
                             <DataGrid.ColumnHeaderStyle>
                                 <Style TargetType="DataGridColumnHeader">
-                                    <Setter Property="Background" Value="#FFFF6B35"/>
+                                    <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>
                                     <Setter Property="Foreground" Value="White"/>
                                     <Setter Property="FontWeight" Value="Bold"/>
                                     <Setter Property="Padding" Value="10"/>
@@ -241,7 +243,7 @@
                                     <Setter Property="Background" Value="Transparent"/>
                                     <Style.Triggers>
                                         <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter Property="Background" Value="#22FF6B35"/>
+                                            <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>
                                         </Trigger>
                                     </Style.Triggers>
                                 </Style>
@@ -259,9 +261,9 @@
                         </Grid.RowDefinitions>
 
                         <Border Grid.Row="0" 
-                Background="#22FF6B35" 
+                Background="{DynamicResource HighlightOverlayBrush}" 
                 Padding="15">
-                            <TextBlock Text="REQUIRED MATERIALS" Style="{StaticResource HeaderTextStyle}"/>
+                            <TextBlock Text="REQUIRED MATERIALS"  Style="{StaticResource HeaderTextStyle}"/>
                         </Border>
 
                         <DataGrid Grid.Row="1" 
@@ -283,7 +285,7 @@
                             </DataGrid.Columns>
                             <DataGrid.ColumnHeaderStyle>
                                 <Style TargetType="DataGridColumnHeader">
-                                    <Setter Property="Background" Value="#FFFF6B35"/>
+                                    <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>
                                     <Setter Property="Foreground" Value="White"/>
                                     <Setter Property="FontWeight" Value="Bold"/>
                                     <Setter Property="Padding" Value="10"/>
@@ -294,7 +296,7 @@
                                     <Setter Property="Background" Value="Transparent"/>
                                     <Style.Triggers>
                                         <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter Property="Background" Value="#22FF6B35"/>
+                                            <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>
                                         </Trigger>
                                     </Style.Triggers>
                                 </Style>
@@ -313,10 +315,19 @@
                     </Grid.RowDefinitions>
 
                     <Border Grid.Row="0" 
-                           Background="#22FF6B35" 
+                           Background="{DynamicResource HighlightOverlayBrush}"
                            Padding="15">
                         <TextBlock Text="CONSTRUCTION PROJECTS" Style="{StaticResource HeaderTextStyle}"/>
                     </Border>
+                    <StackPanel Orientation="Horizontal" 
+                        HorizontalAlignment="Right" 
+                        Margin="10">
+                        <TextBox x:Name="SearchBox" Width="200" TextChanged="SearchBox_TextChanged"/>
+                        <ComboBox x:Name="SearchMode" Width="120" SelectedIndex="0" Margin="5,0,0,0">
+                            <ComboBoxItem Content="Project Name"/>
+                            <ComboBoxItem Content="Created By"/>
+                        </ComboBox>
+                    </StackPanel>
 
                     <ListBox Grid.Row="1"
                             ItemsSource="{Binding Projects}"
@@ -327,11 +338,11 @@
                         <ListBox.ItemTemplate>
                             <DataTemplate>
                                 <Border Background="#FF0A0A0A" 
-                                       BorderBrush="#FF333333" 
-                                       BorderThickness="1" 
-                                       CornerRadius="6" 
-                                       Padding="15" 
-                                       Margin="0,5">
+        BorderBrush="#FF333333" 
+        BorderThickness="1" 
+        CornerRadius="6" 
+        Padding="15" 
+        Margin="0,5">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*"/>
@@ -340,25 +351,35 @@
 
                                         <StackPanel Grid.Column="0">
                                             <TextBlock Text="{Binding StationName}" 
-                                                      Foreground="White" 
-                                                      FontWeight="Bold" 
-                                                      FontSize="14"/>
+                      Foreground="White" 
+                      FontWeight="Bold" 
+                      FontSize="14"/>
                                             <TextBlock Text="{Binding SystemName}" 
-                                                      Foreground="#FF888888" 
-                                                      FontSize="12" 
-                                                      Margin="0,2,0,0"/>
+                      Foreground="#FF888888" 
+                      FontSize="12" 
+                      Margin="0,2,0,0"/>
                                             <TextBlock Text="{Binding MarketId, StringFormat='Market ID: {0}'}" 
-                                                      Foreground="#FF888888" 
-                                                      FontSize="10" 
-                                                      Margin="0,2,0,0"/>
+                      Foreground="#FF888888" 
+                      FontSize="10" 
+                      Margin="0,2,0,0"/>
+                                            <TextBlock Text="{Binding CreatedBy, StringFormat='Created By: {0}'}" 
+                      Foreground="#FFAAAAAA" 
+                      FontSize="10" 
+                      Margin="0,2,0,0"/>
+                                            <TextBlock Text="{Binding CreatedAt, StringFormat='Created: {0:yyyy-MM-dd HH:mm}'}"
+                      Foreground="#FF666666"
+                      FontSize="10"
+                      Margin="0,2,0,0"/>
+
+                                            <!-- ✅ NEW -->
                                         </StackPanel>
 
                                         <Button Grid.Column="1" 
-                                               Content="SELECT" 
-                                               Style="{StaticResource ButtonStyle}" 
-                                               FontSize="10" 
-                                               Padding="10,5"
-        Click="SelectProjectButton_Click"/>
+               Content="SELECT" 
+               Style="{StaticResource ButtonStyle}" 
+               FontSize="10" 
+               Padding="10,5"
+               Click="SelectProjectButton_Click"/>
                                     </Grid>
                                 </Border>
                             </DataTemplate>
@@ -372,7 +393,7 @@
                                             <ContentPresenter/>
                                             <ControlTemplate.Triggers>
                                                 <Trigger Property="IsSelected" Value="True">
-                                                    <Setter Property="Background" Value="#22FF6B35"/>
+                                                    <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>
                                                 </Trigger>
                                             </ControlTemplate.Triggers>
                                         </ControlTemplate>
@@ -394,7 +415,7 @@
                 </Grid.RowDefinitions>
 
                 <Border Grid.Row="0" 
-                       Background="#22FF6B35" 
+                       Background="{DynamicResource HighlightOverlayBrush}" 
                        Padding="15">
                     <TextBlock Text="SYSTEM LOGS" Style="{StaticResource HeaderTextStyle}"/>
                 </Border>
