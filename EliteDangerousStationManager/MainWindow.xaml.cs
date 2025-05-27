@@ -26,6 +26,7 @@ namespace EliteDangerousStationManager
 
         private int? lastSelectedIndex = null;
 
+
         private readonly JournalProcessor journalProcessor;
         private readonly OverlayManager overlayManager;
         private readonly string connectionString = ConfigurationManager.ConnectionStrings["EliteDB"].ConnectionString;
@@ -207,36 +208,88 @@ namespace EliteDangerousStationManager
         }
         private void SelectProjectButton_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button btn && btn.DataContext is Project clickedProject)
+            if (sender is Button button && button.DataContext is Project project)
             {
-                int clickedIndex = Projects.IndexOf(clickedProject);
-                bool isShiftPressed = Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift);
-
-                if (isShiftPressed && lastSelectedIndex.HasValue)
+                if (Keyboard.Modifiers == ModifierKeys.Shift)
                 {
-                    int start = Math.Min(lastSelectedIndex.Value, clickedIndex);
-                    int end = Math.Max(lastSelectedIndex.Value, clickedIndex);
-
-                    for (int i = start; i <= end; i++)
-                    {
-                        var proj = Projects[i];
-                        if (!SelectedProjects.Contains(proj))
-                            SelectedProjects.Add(proj);
-                    }
+                    if (SelectedProjects.Contains(project))
+                        SelectedProjects.Remove(project);
+                    else
+                        SelectedProjects.Add(project);
                 }
                 else
                 {
-                    if (SelectedProjects.Contains(clickedProject))
-                        SelectedProjects.Remove(clickedProject);
-                    else
-                        SelectedProjects.Add(clickedProject);
-
-                    lastSelectedIndex = clickedIndex;
+                    SelectedProjects.Clear();
+                    SelectedProjects.Add(project);
                 }
 
-                UpdateCombinedMaterials();
+                if (SelectedProjects.Count > 0)
+                {
+                    LoadMaterialsForProjects(SelectedProjects); // <- supports combined materials
+                }
+                else
+                {
+                    CurrentProjectMaterials.Clear();
+                }
+
+                OnPropertyChanged(nameof(SelectedProjects));
             }
         }
+
+        private void LoadMaterialsForProjects(IEnumerable<Project> projects)
+        {
+            var combinedMaterials = new Dictionary<string, ProjectMaterial>();
+
+            using var conn = new MySqlConnection(connectionString);
+            conn.Open();
+
+            foreach (var project in projects)
+            {
+                var cmd = new MySqlCommand(@"
+            SELECT ResourceName, RequiredAmount, ProvidedAmount
+            FROM ProjectResources
+            WHERE MarketID = @mid", conn);
+
+                cmd.Parameters.AddWithValue("@mid", project.MarketId);
+                using var reader = cmd.ExecuteReader();
+
+                while (reader.Read())
+                {
+                    var name = reader.GetString("ResourceName");
+                    var required = reader.GetInt32("RequiredAmount");
+                    var provided = reader.GetInt32("ProvidedAmount");
+
+                    if (!combinedMaterials.TryGetValue(name, out var existing))
+                    {
+                        combinedMaterials[name] = new ProjectMaterial
+                        {
+                            Material = name,
+                            Required = required,
+                            Provided = provided,
+                            Needed = Math.Max(required - provided, 0)
+                        };
+                    }
+                    else
+                    {
+                        existing.Required += required;
+                        existing.Provided += provided;
+                        existing.Needed = Math.Max(existing.Required - existing.Provided, 0);
+                    }
+                }
+                reader.Close(); // MUST close reader before looping again
+            }
+
+            Dispatcher.Invoke(() =>
+            {
+                CurrentProjectMaterials.Clear();
+                foreach (var mat in combinedMaterials.Values.OrderBy(m => m.Material))
+                    CurrentProjectMaterials.Add(mat);
+            });
+
+            Logger.Log("Loaded combined materials for selected projects.", "Success");
+        }
+
+
 
         private void UpdateCombinedMaterials()
         {
@@ -473,28 +526,26 @@ namespace EliteDangerousStationManager
             {
                 Logger.Log("Timer tick", "Info");
 
-                // 🔹 Save currently selected project ID
-                var previousProjectId = SelectedProject?.MarketId;
+                // 🔹 Store selected MarketIds
+                var selectedIds = SelectedProjects.Select(p => p.MarketId).ToHashSet();
 
-                // 🔄 Refresh journal data (may reset SelectedProject)
+                // 🔄 Refresh journal data (may reload Projects list)
                 RefreshJournalData();
 
-                // 🔁 Restore previous selection if still available
-                if (previousProjectId != null)
-                {
-                    var matched = Projects.FirstOrDefault(p => p.MarketId == previousProjectId);
-                    if (matched != null)
-                        SelectedProject = matched;
-                }
+                // 🔁 Restore selection
+                var restored = Projects.Where(p => selectedIds.Contains(p.MarketId)).ToList();
+                SelectedProjects.Clear();
+                foreach (var p in restored)
+                    SelectedProjects.Add(p);
 
-                // ✅ Load materials if a project is selected
-                if (SelectedProject != null)
+                // ✅ Load combined materials
+                if (SelectedProjects.Count > 0)
                 {
-                    LoadMaterialsForProject(SelectedProject);
+                    LoadMaterialsForProjects(SelectedProjects);
                 }
                 else
                 {
-                    Logger.Log("No project selected during timer tick.", "Info");
+                    Logger.Log("No projects selected during timer tick.", "Info");
                     Dispatcher.Invoke(() => CurrentProjectMaterials.Clear());
                 }
 
@@ -504,6 +555,7 @@ namespace EliteDangerousStationManager
             LastUpdate = DateTime.Now.ToString("HH:mm:ss");
             timer.Start();
         }
+
 
         private void OpenArchive_Click(object sender, RoutedEventArgs e)
         {

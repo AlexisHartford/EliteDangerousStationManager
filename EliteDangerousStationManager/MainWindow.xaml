@@ -361,17 +361,12 @@
                                         </Grid.ColumnDefinitions>
 
                                         <StackPanel Grid.Column="0">
-                                            <TextBlock Text="{Binding StationName}" 
+                                            <TextBlock x:Name="StationNameTextBlock"
+           Text="{Binding StationName}" 
            FontWeight="Bold" 
-           FontSize="14">
-                                                <TextBlock.Foreground>
-                                                    <MultiBinding Converter="{StaticResource ProjectSelectedToBrushConverter}">
-                                                        <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="SelectedProjects"/>
-                                                        <Binding />
-                                                    </MultiBinding>
-                                                </TextBlock.Foreground>
-                                            </TextBlock>
-
+           FontSize="14"
+           Foreground="White"/>
+                                            
                                             <TextBlock Text="{Binding SystemName}" 
                    Foreground="#FF888888" 
                    FontSize="12" 
@@ -407,12 +402,12 @@
 
 
                                         <Button Grid.Column="2"
-            Content="DELETE"
-            Style="{StaticResource ButtonStyle}"
-            FontSize="10"
-            Padding="10,5"
-            Click="OwnerProjectButton_Click"
-            DataContext="{Binding}">
+                                            Content="DELETE"
+                                            Style="{StaticResource ButtonStyle}"
+                                            FontSize="10"
+                                            Padding="10,5"
+                                            Click="OwnerProjectButton_Click"
+                                            DataContext="{Binding}">
                                             <Button.Visibility>
                                                 <MultiBinding Converter="{StaticResource CreatorVisibilityConverter}">
                                                     <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="CommanderName"/>
@@ -422,6 +417,11 @@
                                         </Button>
                                     </Grid>
                                 </Border>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                        <Setter TargetName="StationNameTextBlock" Property="Foreground" Value="LimeGreen"/>
+                                    </DataTrigger>
+                                </DataTemplate.Triggers>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                         <ListBox.ItemContainerStyle>
