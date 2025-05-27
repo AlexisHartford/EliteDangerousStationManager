@@ -112,6 +112,19 @@ namespace EliteDangerousStationManager.Services
 
             return projects;
         }
+        public void DeleteProject(long marketId)
+        {
+            using var conn = new MySqlConnection(_connectionString);
+            conn.Open();
+
+            using var cmd = new MySqlCommand(@"
+        DELETE FROM ProjectResources WHERE MarketID = @mid;
+        DELETE FROM Projects WHERE MarketID = @mid;", conn);
+            cmd.Parameters.AddWithValue("@mid", marketId);
+
+            cmd.ExecuteNonQuery();
+        }
+
 
 
     }

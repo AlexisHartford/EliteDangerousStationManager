@@ -16,13 +16,15 @@ using EliteDangerousStationManager.Helpers;
 using EliteDangerousStationManager.Services;
 using EliteDangerousStationManager.Overlay;
 using MySql.Data.MySqlClient;
+using System.Windows.Input;
 
 namespace EliteDangerousStationManager
 {
     public partial class MainWindow : Window, INotifyPropertyChanged
     {
         private readonly ProjectDatabaseService projectDb;
-        
+
+        private int? lastSelectedIndex = null;
 
         private readonly JournalProcessor journalProcessor;
         private readonly OverlayManager overlayManager;
@@ -63,9 +65,22 @@ namespace EliteDangerousStationManager
                 }
             }
         }
+        private ObservableCollection<Project> _selectedProjects = new ObservableCollection<Project>();
+        public ObservableCollection<Project> SelectedProjects
+        {
+            get => _selectedProjects;
+            set
+            {
+                _selectedProjects = value;
+                OnPropertyChanged();
+                UpdateCombinedMaterials();
+            }
+        }
+
 
         public MainWindow()
         {
+
             InitializeComponent();
             string configPath = "settings.config";
             if (File.Exists(configPath))
@@ -189,16 +204,95 @@ namespace EliteDangerousStationManager
             foreach (var p in loaded)
                 Projects.Add(p);
 
-            if (Projects.Count > 0)
-                SelectedProject = Projects[0];
         }
         private void SelectProjectButton_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button btn && btn.DataContext is Project proj)
+            if (sender is Button btn && btn.DataContext is Project clickedProject)
             {
-                SelectedProject = proj; // <- This triggers LoadMaterialsForProject
+                int clickedIndex = Projects.IndexOf(clickedProject);
+                bool isShiftPressed = Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift);
+
+                if (isShiftPressed && lastSelectedIndex.HasValue)
+                {
+                    int start = Math.Min(lastSelectedIndex.Value, clickedIndex);
+                    int end = Math.Max(lastSelectedIndex.Value, clickedIndex);
+
+                    for (int i = start; i <= end; i++)
+                    {
+                        var proj = Projects[i];
+                        if (!SelectedProjects.Contains(proj))
+                            SelectedProjects.Add(proj);
+                    }
+                }
+                else
+                {
+                    if (SelectedProjects.Contains(clickedProject))
+                        SelectedProjects.Remove(clickedProject);
+                    else
+                        SelectedProjects.Add(clickedProject);
+
+                    lastSelectedIndex = clickedIndex;
+                }
+
+                UpdateCombinedMaterials();
             }
         }
+
+        private void UpdateCombinedMaterials()
+        {
+            CurrentProjectMaterials.Clear();
+
+            if (!SelectedProjects.Any()) return;
+
+            var combined = new Dictionary<string, ProjectMaterial>();
+
+            using var conn = new MySqlConnection(connectionString);
+            conn.Open();
+
+            foreach (var proj in SelectedProjects)
+            {
+                var cmd = new MySqlCommand(@"
+                    SELECT ResourceName, RequiredAmount, ProvidedAmount
+                    FROM ProjectResources
+                    WHERE MarketID = @mid;", conn);
+
+                cmd.Parameters.AddWithValue("@mid", proj.MarketId);
+
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    string name = reader.GetString("ResourceName");
+                    int required = reader.GetInt32("RequiredAmount");
+                    int provided = reader.GetInt32("ProvidedAmount");
+
+                    if (!combined.ContainsKey(name))
+                    {
+                        combined[name] = new ProjectMaterial
+                        {
+                            Material = name,
+                            Required = 0,
+                            Provided = 0,
+                            Needed = 0
+                        };
+                    }
+
+                    var mat = combined[name];
+                    mat.Required += required;
+                    mat.Provided += provided;
+                    mat.Needed = Math.Max(mat.Required - mat.Provided, 0);
+                }
+                reader.Close();
+            }
+
+            foreach (var mat in combined.Values.OrderBy(m => m.Material))
+            {
+                if (mat.Needed > 0)
+                    CurrentProjectMaterials.Add(mat);
+            }
+
+            Logger.Log($"Combined materials for {SelectedProjects.Count} selected projects.", "Info");
+        }
+
         private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
         {
             string keyword = SearchBox.Text.ToLower();
@@ -378,21 +472,77 @@ namespace EliteDangerousStationManager
             timer.Tick += (s, e) =>
             {
                 Logger.Log("Timer tick", "Info");
+
+                // 🔹 Save currently selected project ID
+                var previousProjectId = SelectedProject?.MarketId;
+
+                // 🔄 Refresh journal data (may reset SelectedProject)
                 RefreshJournalData();
-                LoadMaterialsForProject(SelectedProject);
+
+                // 🔁 Restore previous selection if still available
+                if (previousProjectId != null)
+                {
+                    var matched = Projects.FirstOrDefault(p => p.MarketId == previousProjectId);
+                    if (matched != null)
+                        SelectedProject = matched;
+                }
+
+                // ✅ Load materials if a project is selected
+                if (SelectedProject != null)
+                {
+                    LoadMaterialsForProject(SelectedProject);
+                }
+                else
+                {
+                    Logger.Log("No project selected during timer tick.", "Info");
+                    Dispatcher.Invoke(() => CurrentProjectMaterials.Clear());
+                }
+
                 LastUpdate = DateTime.Now.ToString("HH:mm:ss");
             };
 
             LastUpdate = DateTime.Now.ToString("HH:mm:ss");
-
             timer.Start();
         }
+
         private void OpenArchive_Click(object sender, RoutedEventArgs e)
         {
             var archiveWindow = new ArchiveWindow(projectDb);
             archiveWindow.Owner = this;
             archiveWindow.Show();
         }
+        private void OwnerProjectButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.DataContext is Project proj)
+            {
+                // Show confirmation dialog
+                var result = MessageBox.Show(
+                    $"Are you sure you want to delete the project \"{proj.StationName}\"?\nThis cannot be undone.",
+                    "Confirm Deletion",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    try
+                    {
+                        // Call your DB service to delete the project
+                        projectDb.DeleteProject(proj.MarketId);
+
+                        // Remove from UI collection
+                        Projects.Remove(proj);
+
+                        Logger.Log($"Project deleted: {proj.StationName} ({proj.MarketId})", "Success");
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"Error deleting project: {ex.Message}", "Error");
+                        MessageBox.Show("Failed to delete the project.\n" + ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                }
+            }
+        }
+
 
 
         public event PropertyChangedEventHandler PropertyChanged;

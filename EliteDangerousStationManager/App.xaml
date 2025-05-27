@@ -1,8 +1,18 @@
 ﻿<Application x:Class="EliteDangerousStationManager.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:EliteDangerousStationManager.Converters"
+             
              StartupUri="MainWindow.xaml">
     <Application.Resources>
+
+        <!-- ✅ Register your converter -->
+        <converters:CreatorVisibilityConverter x:Key="CreatorVisibilityConverter" />
+        <converters:ProjectSelectTextConverter x:Key="ProjectSelectTextConverter" />
+        <converters:ProjectSelectedToBrushConverter x:Key="ProjectSelectedToBrushConverter"/>
+        <converters:ProjectGlowEffectConverter x:Key="ProjectGlowEffectConverter" />
+
+
 
         <!-- ✅ Highlight colors (dynamic) -->
         <SolidColorBrush x:Key="HighlightBrush" Color="#FFFF6B35" />
