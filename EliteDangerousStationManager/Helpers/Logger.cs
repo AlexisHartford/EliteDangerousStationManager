@@ -9,25 +9,46 @@ namespace EliteDangerousStationManager.Helpers
     {
         public static ObservableCollection<LogEntry> Entries { get; } = new();
 
-        private static readonly string LogDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-            "EDStationManager"
-        );
-
-        private static readonly string LogFilePath = Path.Combine(LogDirectory, "log.txt");
+        private static string LogDirectory;
+        private static string LogFilePath;
 
         static Logger()
         {
             try
             {
+                LogDirectory = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                    "EDStationManager"
+                );
+
                 if (!Directory.Exists(LogDirectory))
                     Directory.CreateDirectory(LogDirectory);
             }
             catch
             {
-                // If even directory creation fails, fallback to current folder
                 LogDirectory = AppDomain.CurrentDomain.BaseDirectory;
-                LogFilePath = Path.Combine(LogDirectory, "log.txt");
+            }
+
+            LogFilePath = Path.Combine(LogDirectory, "log.txt");
+            ArchiveOldLog();
+        }
+
+        private static void ArchiveOldLog()
+        {
+            try
+            {
+                if (File.Exists(LogFilePath))
+                {
+                    string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+                    string archivePath = Path.Combine(LogDirectory, $"log_{timestamp}.txt");
+                    File.Move(LogFilePath, archivePath);
+                }
+
+                File.WriteAllText(LogFilePath, ""); // Create a new empty log file
+            }
+            catch
+            {
+                // Fail silently if log rotation fails
             }
         }
 
@@ -45,9 +66,6 @@ namespace EliteDangerousStationManager.Helpers
 
             try
             {
-                if (!Directory.Exists(LogDirectory))
-                    Directory.CreateDirectory(LogDirectory);
-
                 File.AppendAllText(LogFilePath, $"[{timestamp:yyyy-MM-dd HH:mm:ss}] [{type}] {message}{Environment.NewLine}");
             }
             catch

@@ -9,13 +9,13 @@ namespace EliteDangerousStationManager.Services
     public class InaraApiService
     {
         private readonly string commanderName;
-        private readonly string apiKey;
+        private readonly string APIkey;
         private readonly HttpClient client = new();
 
-        public InaraApiService(string commanderName, string apiKey)
+        public InaraApiService(string commanderName, string APIkey)
         {
             this.commanderName = commanderName;
-            this.apiKey = apiKey;
+            this.APIkey = APIkey;
         }
 
         public async Task SendEventsAsync(List<InaraEvent> events)
@@ -30,10 +30,10 @@ namespace EliteDangerousStationManager.Services
             {
                 header = new
                 {
-                    appName = "ENEX Station Manager",
+                    appName = "ENEX Carrier Bot",
                     appVersion = "1.0",
                     isDeveloped = true,
-                    APIkey = apiKey,
+                    APIkey = APIkey,
                     commanderName = commanderName
                 },
                 events = events.Select(e => new
@@ -44,7 +44,9 @@ namespace EliteDangerousStationManager.Services
                 })
             };
 
-            string json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            string json = JsonSerializer.Serialize(payload);
+
+
 
             try
             {

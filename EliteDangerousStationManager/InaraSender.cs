@@ -11,12 +11,12 @@ namespace EliteDangerousStationManager
     {
         private static readonly HttpClient httpClient = new HttpClient();
         private readonly string commanderName;
-        private readonly string apiKey;
+        private readonly string APIkey;
 
-        public InaraSender(string commanderName, string apiKey)
+        public InaraSender(string commanderName, string APIkey)
         {
             this.commanderName = commanderName;
-            this.apiKey = apiKey;
+            this.APIkey = APIkey;
         }
 
         public async Task SendEventsAsync(List<object> events)
@@ -31,7 +31,7 @@ namespace EliteDangerousStationManager
                     appName = "EliteDangerousStationManager",
                     appVersion = "1.0",
                     isDeveloped = true,
-                    APIkey = apiKey,
+                    APIkey = APIkey,
                     commanderName = commanderName,
                     commanderFrontierID = 0
                 },

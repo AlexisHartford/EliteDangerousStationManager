@@ -1,39 +1,26 @@
-using System.Text.Json;
-using System.Text;
-using System.Net.Http;
-using EliteDangerousStationManager.Models;
 using EliteDangerousStationManager.Helpers;
+using EliteDangerousStationManager.Models;
 using System.IO;
+using System.Text.Json;
 
 namespace EliteDangerousStationManager.Services
 {
     public class InaraService
     {
         private readonly string commanderName;
-        private readonly string inaraApiKey;
+        private readonly string APIkey;
         private readonly JournalParser journalParser;
-        private readonly string syncStateFile = "LastInaraSync.txt";
+        private readonly InaraApiService apiService;
         private DateTime lastSyncedTime;
 
-        public InaraService(string commander, string apiKey, string journalPath)
+        public InaraService(string commanderName, string APIkey, string journalPath)
         {
-            commanderName = commander;
-            inaraApiKey = apiKey;
-            journalParser = new JournalParser(journalPath);
-            LoadLastSyncedTime();
-        }
+            this.commanderName = commanderName;
+            this.APIkey = APIkey;
+            this.journalParser = new JournalParser(journalPath, commanderName);
 
-        private void LoadLastSyncedTime()
-        {
-            if (File.Exists(syncStateFile) && DateTime.TryParse(File.ReadAllText(syncStateFile), out var time))
-                lastSyncedTime = time;
-            else
-                lastSyncedTime = DateTime.MinValue;
-        }
-
-        private void SaveLastSyncedTime(DateTime newTime)
-        {
-            File.WriteAllText(syncStateFile, newTime.ToString("o"));
+            this.apiService = new InaraApiService(commanderName, APIkey);
+            this.lastSyncedTime = LoadLastSyncedTime();
         }
 
         public async Task SendUpdateToInara()
@@ -41,48 +28,51 @@ namespace EliteDangerousStationManager.Services
             try
             {
                 var newEvents = journalParser.GetNewInaraEvents(lastSyncedTime);
+
                 if (!newEvents.Any())
                 {
                     Logger.Log("No new journal events to sync.", "Info");
                     return;
                 }
 
-                var payload = new
-                {
-                    header = new
-                    {
-                        appName = "ENEX Carrier Bot",
-                        appVersion = "1.0",
-                        isDeveloped = true,
-                        APIkey = inaraApiKey,
-                        commanderName = commanderName
-                    },
-                    events = newEvents.Select(e => new
-                    {
-                        eventName = e.EventName,
-                        eventTimestamp = e.Timestamp.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                        eventData = e.Data
-                    }).ToArray()
-                };
+                await apiService.SendEventsAsync(newEvents);
 
-                string json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+                var latestTime = newEvents.Max(e => e.Timestamp);
+                SaveLastSyncedTime(latestTime);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Error during INARA update: {ex.Message}", "Error");
+            }
+        }
 
-                using var client = new HttpClient();
-                var response = await client.PostAsync("https://inara.cz/inapi/v1/", new StringContent(json, Encoding.UTF8, "application/json"));
-
-                if (response.IsSuccessStatusCode)
+        private DateTime LoadLastSyncedTime()
+        {
+            try
+            {
+                if (File.Exists("lastInaraSync.txt"))
                 {
-                    Logger.Log($"Sent {newEvents.Count} events to INARA.", "Success");
-                    SaveLastSyncedTime(newEvents.Max(e => e.Timestamp));
-                }
-                else
-                {
-                    Logger.Log("Failed to sync to INARA: " + response.StatusCode, "Error");
+                    string text = File.ReadAllText("lastInaraSync.txt");
+                    if (DateTime.TryParse(text, out var dt))
+                        return dt;
                 }
             }
             catch (Exception ex)
             {
-                Logger.Log("INARA update error: " + ex.Message, "Error");
+                Logger.Log($"Failed to load last sync time: {ex.Message}", "Warning");
+            }
+            return DateTime.UtcNow.AddHours(-1); // default to past hour
+        }
+
+        private void SaveLastSyncedTime(DateTime timestamp)
+        {
+            try
+            {
+                File.WriteAllText("lastInaraSync.txt", timestamp.ToString("O"));
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Failed to save last sync time: {ex.Message}", "Warning");
             }
         }
     }
