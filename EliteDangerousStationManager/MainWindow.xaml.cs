@@ -23,17 +23,12 @@ namespace EliteDangerousStationManager
     public partial class MainWindow : Window, INotifyPropertyChanged
     {
         private readonly ProjectDatabaseService projectDb;
-
         private int? lastSelectedIndex = null;
-
-
         private readonly JournalProcessor journalProcessor;
         private readonly OverlayManager overlayManager;
         private readonly string connectionString = ConfigurationManager.ConnectionStrings["EliteDB"].ConnectionString;
         private InaraService inaraService;
         public string CommanderName { get; private set; }
-
-
 
         public ObservableCollection<LogEntry> LogEntries => Logger.Entries;
         public ObservableCollection<Project> Projects { get; set; } = new ObservableCollection<Project>();
@@ -51,6 +46,7 @@ namespace EliteDangerousStationManager
         }
 
         private DispatcherTimer timer;
+        private DispatcherTimer inaraTimer;
         private Project _selectedProject;
         public Project SelectedProject
         {
@@ -99,12 +95,10 @@ namespace EliteDangerousStationManager
                     catch
                     {
                         Application.Current.Resources["HighlightBrush"] = new SolidColorBrush(Colors.Orange);
-                        Application.Current.Resources["HighlightOverlayBrush"] = new SolidColorBrush(Color.FromArgb(0x22, 255, 140, 0)); // semi-transparent
+                        Application.Current.Resources["HighlightOverlayBrush"] = new SolidColorBrush(Color.FromArgb(0x22, 255, 140, 0));
                     }
                 }
             }
-        
-    
 
             DataContext = this;
 
@@ -113,20 +107,19 @@ namespace EliteDangerousStationManager
 
             projectDb = new ProjectDatabaseService(connectionString);
             journalProcessor = new JournalProcessor(journalPath, CommanderName ?? "UnknownCommander");
-
             overlayManager = new OverlayManager();
 
-            // ✅ Initialize InaraService here
             ReadCommanderNameFromJournal();
 
             inaraService = new InaraService(
                 CommanderName ?? "UnknownCommander",
                 "YOUR_INARA_API_KEY_HERE",
-                () => SelectedProject,
-                () => CurrentProjectMaterials.ToList(),
-                () => CargoItems.ToList()
+                journalPath
             );
-            inaraService.Start();
+
+            inaraTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+            inaraTimer.Tick += async (s, e) => await inaraService.SendUpdateToInara();
+            inaraTimer.Start();
 
             this.Closed += (s, e) => overlayManager.CloseOverlay();
 
@@ -226,6 +219,8 @@ namespace EliteDangerousStationManager
                 if (SelectedProjects.Count > 0)
                 {
                     LoadMaterialsForProjects(SelectedProjects); // <- supports combined materials
+                    overlayManager.ShowOverlay(CurrentProjectMaterials);
+
                 }
                 else
                 {
@@ -353,13 +348,15 @@ namespace EliteDangerousStationManager
 
             var filtered = projectDb.LoadProjects().Where(p =>
                 (mode == 0 && p.StationName.ToLower().Contains(keyword)) ||
-                (mode == 1 && (p.CreatedBy?.ToLower().Contains(keyword) ?? false))
+                (mode == 1 && (p.CreatedBy?.ToLower().Contains(keyword) ?? false)) ||
+                (mode == 2 && (CommanderName?.ToLower().Contains(keyword) ?? false))
             );
 
             Projects.Clear();
             foreach (var proj in filtered)
                 Projects.Add(proj);
         }
+
 
 
         private void LoadMaterialsForProject(Project project)
@@ -488,7 +485,6 @@ namespace EliteDangerousStationManager
                 var key = settingsWindow.InaraApiKey;
                 var color = settingsWindow.HighlightColor;
 
-                // Apply user-defined highlight color
                 try
                 {
                     var parsedColor = (Color)ColorConverter.ConvertFromString(color);
@@ -501,20 +497,26 @@ namespace EliteDangerousStationManager
                 catch
                 {
                     Application.Current.Resources["HighlightBrush"] = new SolidColorBrush(Colors.Orange);
-                    Application.Current.Resources["HighlightOverlayBrush"] = new SolidColorBrush(Color.FromArgb(0x22, 255, 140, 0)); // semi-transparent
+                    Application.Current.Resources["HighlightOverlayBrush"] = new SolidColorBrush(Color.FromArgb(0x22, 255, 140, 0));
                 }
 
-
                 Logger.Log("Settings updated.", "Success");
+
+                string journalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    "Saved Games", "Frontier Developments", "Elite Dangerous");
 
                 inaraService = new InaraService(
                     CommanderName ?? "UnknownCommander",
                     key,
-                    () => SelectedProject,
-                    () => CurrentProjectMaterials.ToList(),
-                    () => CargoItems.ToList()
+                    journalPath
                 );
-                inaraService.Start();
+
+                if (inaraTimer != null)
+                    inaraTimer.Stop();
+
+                inaraTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
+                inaraTimer.Tick += async (s2, e2) => await inaraService.SendUpdateToInara();
+                inaraTimer.Start();
             }
         }
 
@@ -563,6 +565,45 @@ namespace EliteDangerousStationManager
             archiveWindow.Owner = this;
             archiveWindow.Show();
         }
+        private void CompletedProjectButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button button && button.DataContext is Project project)
+            {
+                var result = MessageBox.Show(
+                    $"Are you sure you want to mark project '{project.StationName}' as completed?",
+                    "Confirm Completion",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    try
+                    {
+                        // Archive the project in the database
+                        projectDb.ArchiveProject(project.MarketId);
+
+                        // Remove from UI list
+                        Projects.Remove(project);
+
+                        // Remove from selected projects if selected
+                        if (SelectedProjects.Contains(project))
+                        {
+                            SelectedProjects.Remove(project);
+                            LoadMaterialsForProjects(SelectedProjects);
+                            overlayManager.ShowOverlay(CurrentProjectMaterials);
+                        }
+
+                        Logger.Log($"Project '{project.StationName}' has been archived.", "Success");
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"Failed to archive project: {ex.Message}", "Error");
+                    }
+                }
+            }
+        }
+
+
         private void OwnerProjectButton_Click(object sender, RoutedEventArgs e)
         {
             if (sender is Button btn && btn.DataContext is Project proj)

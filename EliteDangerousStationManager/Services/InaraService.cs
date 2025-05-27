@@ -1,55 +1,49 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http;
-using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
-using System.Windows.Threading;
+using System.Text;
+using System.Net.Http;
 using EliteDangerousStationManager.Models;
 using EliteDangerousStationManager.Helpers;
+using System.IO;
 
 namespace EliteDangerousStationManager.Services
 {
     public class InaraService
     {
-        private readonly DispatcherTimer timer;
-        private readonly Func<Project> getCurrentProject;
-        private readonly Func<List<ProjectMaterial>> getCurrentMaterials;
-        private readonly Func<List<CargoItem>> getCurrentCargo;
         private readonly string commanderName;
         private readonly string inaraApiKey;
+        private readonly JournalParser journalParser;
+        private readonly string syncStateFile = "LastInaraSync.txt";
+        private DateTime lastSyncedTime;
 
-        public InaraService(
-            string commander,
-            string apiKey,
-            Func<Project> currentProjectAccessor,
-            Func<List<ProjectMaterial>> materialAccessor,
-            Func<List<CargoItem>> cargoAccessor)
+        public InaraService(string commander, string apiKey, string journalPath)
         {
             commanderName = commander;
             inaraApiKey = apiKey;
-            getCurrentProject = currentProjectAccessor;
-            getCurrentMaterials = materialAccessor;
-            getCurrentCargo = cargoAccessor;
-
-            timer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
-            timer.Tick += async (s, e) => await SendUpdateToInara();
+            journalParser = new JournalParser(journalPath);
+            LoadLastSyncedTime();
         }
 
-        public void Start() => timer.Start();
+        private void LoadLastSyncedTime()
+        {
+            if (File.Exists(syncStateFile) && DateTime.TryParse(File.ReadAllText(syncStateFile), out var time))
+                lastSyncedTime = time;
+            else
+                lastSyncedTime = DateTime.MinValue;
+        }
 
-        private async Task SendUpdateToInara()
+        private void SaveLastSyncedTime(DateTime newTime)
+        {
+            File.WriteAllText(syncStateFile, newTime.ToString("o"));
+        }
+
+        public async Task SendUpdateToInara()
         {
             try
             {
-                var project = getCurrentProject();
-                var materials = getCurrentMaterials();
-                var cargo = getCurrentCargo();
-
-                if (project == null || materials == null || cargo == null)
+                var newEvents = journalParser.GetNewInaraEvents(lastSyncedTime);
+                if (!newEvents.Any())
                 {
-                    Logger.Log("Inara sync skipped: missing data.", "Warning");
+                    Logger.Log("No new journal events to sync.", "Info");
                     return;
                 }
 
@@ -57,48 +51,18 @@ namespace EliteDangerousStationManager.Services
                 {
                     header = new
                     {
-                        appName = "EDStationManager",
+                        appName = "ENEX Carrier Bot",
                         appVersion = "1.0",
                         isDeveloped = true,
                         APIkey = inaraApiKey,
                         commanderName = commanderName
                     },
-                    events = new object[]
+                    events = newEvents.Select(e => new
                     {
-                        new
-                        {
-                            eventName = "logColonisationDepot",
-                            eventTimestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                            eventData = new
-                            {
-                                marketId = project.MarketId,
-                                progress = materials.Sum(m => m.Provided) / (double)materials.Sum(m => m.Required),
-                                isCompleted = materials.All(m => m.Provided >= m.Required),
-                                isFailed = false,
-                                resources = materials.Select(m => new
-                                {
-                                    name = m.Material.ToLower().Replace(" ", "_"),
-                                    required = m.Required,
-                                    delivered = m.Provided,
-                                    payment = 0
-                                })
-                            }
-                        },
-                        new
-                        {
-                            eventName = "logCargo",
-                            eventTimestamp = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                            eventData = new
-                            {
-                                shipType = "FleetCarrier",
-                                cargo = cargo.Select(c => new
-                                {
-                                    name = c.Name.ToLower().Replace(" ", "_"),
-                                    count = c.Quantity
-                                })
-                            }
-                        }
-                    }
+                        eventName = e.EventName,
+                        eventTimestamp = e.Timestamp.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                        eventData = e.Data
+                    }).ToArray()
                 };
 
                 string json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
@@ -106,13 +70,19 @@ namespace EliteDangerousStationManager.Services
                 using var client = new HttpClient();
                 var response = await client.PostAsync("https://inara.cz/inapi/v1/", new StringContent(json, Encoding.UTF8, "application/json"));
 
-                Logger.Log(response.IsSuccessStatusCode
-                    ? "INARA sync succeeded."
-                    : $"INARA sync failed: {response.StatusCode}", response.IsSuccessStatusCode ? "Success" : "Error");
+                if (response.IsSuccessStatusCode)
+                {
+                    Logger.Log($"Sent {newEvents.Count} events to INARA.", "Success");
+                    SaveLastSyncedTime(newEvents.Max(e => e.Timestamp));
+                }
+                else
+                {
+                    Logger.Log("Failed to sync to INARA: " + response.StatusCode, "Error");
+                }
             }
             catch (Exception ex)
             {
-                Logger.Log("Error during INARA update: " + ex.Message, "Error");
+                Logger.Log("INARA update error: " + ex.Message, "Error");
             }
         }
     }

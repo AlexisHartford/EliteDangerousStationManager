@@ -15,7 +15,7 @@
             <TextBox x:Name="SearchBox"
                      Width="200"
                      Margin="0,0,10,0"
-                     Foreground="Black"
+                     Foreground="white"
                      VerticalAlignment="Center"
                      TextChanged="SearchBox_TextChanged"/>
             <ComboBox x:Name="SearchMode"
@@ -24,6 +24,7 @@
                       VerticalAlignment="Center">
                 <ComboBoxItem Content="Station Name"/>
                 <ComboBoxItem Content="Created By"/>
+              <ComboBoxItem Content="System Name"/>
             </ComboBox>
         </StackPanel>
 

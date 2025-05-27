@@ -32,7 +32,8 @@ namespace EliteDangerousStationManager
 
             var filtered = _allArchived.Where(p =>
                 (mode == 0 && p.StationName.ToLower().Contains(keyword)) ||
-                (mode == 1 && p.CreatedBy.ToLower().Contains(keyword))
+                (mode == 1 && p.CreatedBy.ToLower().Contains(keyword)) ||
+                (mode == 2 && p.SystemName.ToLower().Contains(keyword))
             ).ToList();
 
             ArchivedList.ItemsSource = filtered;

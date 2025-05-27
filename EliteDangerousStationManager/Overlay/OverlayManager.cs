@@ -19,6 +19,7 @@ namespace EliteDangerousStationManager.Overlay
             _overlay.OverlayMaterialsList.ItemsSource = materials;
         }
 
+
         public void CloseOverlay()
         {
             if (_overlay != null && _overlay.IsLoaded)

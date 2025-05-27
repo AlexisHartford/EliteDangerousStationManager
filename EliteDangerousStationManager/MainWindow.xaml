@@ -326,6 +326,7 @@
                         <ComboBox x:Name="SearchMode" Width="120" SelectedIndex="0" Margin="5,0,0,0">
                             <ComboBoxItem Content="Project Name"/>
                             <ComboBoxItem Content="Created By"/>
+                            <ComboBoxItem Content="System Name"/>
                         </ComboBox>
                     </StackPanel>
 
@@ -358,6 +359,7 @@
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                             <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
 
                                         <StackPanel Grid.Column="0">
@@ -388,6 +390,7 @@
                                         <Button Grid.Column="1"
         Style="{StaticResource ButtonStyle}" 
         FontSize="10" 
+        Height="35"
         Padding="10,5"
         Click="SelectProjectButton_Click">
                                             <Button.Content>
@@ -402,12 +405,13 @@
 
 
                                         <Button Grid.Column="2"
-                                            Content="DELETE"
-                                            Style="{StaticResource ButtonStyle}"
-                                            FontSize="10"
-                                            Padding="10,5"
-                                            Click="OwnerProjectButton_Click"
-                                            DataContext="{Binding}">
+    Content="DELETE"
+    Style="{StaticResource ButtonStyle}"
+    FontSize="10"
+    Height="35"
+    Padding="10,5"
+    Click="OwnerProjectButton_Click"
+    DataContext="{Binding}">
                                             <Button.Visibility>
                                                 <MultiBinding Converter="{StaticResource CreatorVisibilityConverter}">
                                                     <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="CommanderName"/>
@@ -415,6 +419,21 @@
                                                 </MultiBinding>
                                             </Button.Visibility>
                                         </Button>
+                                    <Button Grid.Column="3"
+    Content="Completed"
+    Style="{StaticResource ButtonStyle}"
+    FontSize="10"
+    Height="35"
+    Padding="10,5"
+    Click="CompletedProjectButton_Click"
+    DataContext="{Binding}">
+    <Button.Visibility>
+        <MultiBinding Converter="{StaticResource CreatorVisibilityConverter}">
+            <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="CommanderName"/>
+            <Binding Path="CreatedBy"/>
+        </MultiBinding>
+    </Button.Visibility>
+</Button>
                                     </Grid>
                                 </Border>
                                 <DataTemplate.Triggers>
