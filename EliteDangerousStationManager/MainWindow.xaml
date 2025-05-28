@@ -237,7 +237,7 @@
 
 
                         <DataGrid Grid.Row="1" 
-                  ItemsSource="{Binding FleetCarrierCargoItems}"
+                  ItemsSource="{Binding CarrierMaterialOverview}"
                   Background="Transparent"
                   Foreground="White"
                   GridLinesVisibility="Horizontal"

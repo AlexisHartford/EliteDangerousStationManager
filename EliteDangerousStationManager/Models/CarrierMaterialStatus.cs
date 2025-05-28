@@ -1,6 +1,4 @@
-﻿using System;
-
-namespace EliteDangerousStationManager.Models
+﻿namespace EliteDangerousStationManager.Models
 {
     public class CarrierMaterialStatus
     {

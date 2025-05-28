@@ -547,7 +547,10 @@ namespace EliteDangerousStationManager
                     StillNeeded = stillNeeded
                 });
             }
+
+            OnPropertyChanged(nameof(CarrierMaterialOverview)); // If needed
         }
+
 
 
 
@@ -683,7 +686,8 @@ namespace EliteDangerousStationManager
 
         private void RefreshCargoButton_Click(object sender, RoutedEventArgs e)
         {
-            FleetCarrierCargoItems.Clear();
+            journalProcessor.FleetCarrierCargoItems.Clear();
+            CarrierMaterialOverview.Clear();
             Logger.Log("Fleet Carrier cargo list cleared.", "Info");
         }
 
