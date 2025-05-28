@@ -27,7 +27,6 @@ namespace EliteDangerousStationManager
         private readonly JournalProcessor journalProcessor;
         private readonly OverlayManager overlayManager;
         private readonly string connectionString = ConfigurationManager.ConnectionStrings["EliteDB"].ConnectionString;
-        private InaraService inaraService;
         public string CommanderName { get; private set; }
 
         public ObservableCollection<LogEntry> LogEntries => Logger.Entries;
@@ -36,6 +35,7 @@ namespace EliteDangerousStationManager
         public ObservableCollection<CargoItem> CargoItems { get; set; } = new ObservableCollection<CargoItem>();
         public ObservableCollection<CargoItem> FleetCarrierCargoItems { get; set; } = new ObservableCollection<CargoItem>();
         public ObservableCollection<CarrierMaterialStatus> CarrierMaterialOverview { get; set; } = new();
+        private InaraSender inaraSender; // <-- Add this line
 
 
         private string _lastUpdate;
@@ -83,6 +83,8 @@ namespace EliteDangerousStationManager
         {
 
             InitializeComponent();
+            if (inaraSender == null)
+                inaraSender = new InaraSender();
             string configPath = "settings.config";
             if (File.Exists(configPath))
             {
@@ -115,15 +117,6 @@ namespace EliteDangerousStationManager
 
             ReadCommanderNameFromJournal();
 
-            inaraService = new InaraService(
-                CommanderName ?? "UnknownCommander",
-                "YOUR_INARA_API_KEY_HERE",
-                journalPath
-            );
-
-            inaraTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
-            inaraTimer.Tick += async (s, e) => await inaraService.SendUpdateToInara();
-            inaraTimer.Start();
 
             this.Closed += (s, e) => overlayManager.CloseOverlay();
 
@@ -509,18 +502,6 @@ namespace EliteDangerousStationManager
                 string journalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                     "Saved Games", "Frontier Developments", "Elite Dangerous");
 
-                inaraService = new InaraService(
-                    CommanderName ?? "UnknownCommander",
-                    key,
-                    journalPath
-                );
-
-                if (inaraTimer != null)
-                    inaraTimer.Stop();
-
-                inaraTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(1) };
-                inaraTimer.Tick += async (s2, e2) => await inaraService.SendUpdateToInara();
-                inaraTimer.Start();
             }
         }
         private void UpdateCarrierMaterialOverview()

@@ -37,6 +37,7 @@ namespace EliteDangerousStationManager.Helpers
         {
             try
             {
+                // Rotate current log
                 if (File.Exists(LogFilePath))
                 {
                     string timestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
@@ -44,13 +45,26 @@ namespace EliteDangerousStationManager.Helpers
                     File.Move(LogFilePath, archivePath);
                 }
 
-                File.WriteAllText(LogFilePath, ""); // Create a new empty log file
+                // Create a new empty log file
+                File.WriteAllText(LogFilePath, "");
+
+                // Delete old logs, keep only the 5 most recent
+                var logFiles = Directory.GetFiles(LogDirectory, "log_*.txt")
+                                        .OrderByDescending(f => File.GetCreationTime(f))
+                                        .Skip(5)
+                                        .ToList();
+
+                foreach (var file in logFiles)
+                {
+                    File.Delete(file);
+                }
             }
             catch
             {
-                // Fail silently if log rotation fails
+                // Fail silently if log rotation or cleanup fails
             }
         }
+
 
         public static void Log(string message, string type = "Info")
         {

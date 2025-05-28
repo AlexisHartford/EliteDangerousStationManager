@@ -13,6 +13,8 @@ namespace EliteDangerousStationManager.Services
         private readonly string _journalPath;
         private readonly string commanderName;
         private readonly EddnSender eddnSender;
+        private readonly InaraSender inaraSender;
+
 
         private ReadState lastState = new();
         private string stateFilePath;
@@ -30,6 +32,8 @@ namespace EliteDangerousStationManager.Services
             _journalPath = journalPath;
             this.commanderName = commanderName;
             this.eddnSender = new EddnSender();
+            this.inaraSender = new InaraSender();
+
 
             stateFilePath = Path.Combine(_journalPath, "lastread.state");
             LoadReadState();
