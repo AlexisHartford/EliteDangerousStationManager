@@ -34,6 +34,10 @@ namespace EliteDangerousStationManager
         public ObservableCollection<Project> Projects { get; set; } = new ObservableCollection<Project>();
         public ObservableCollection<ProjectMaterial> CurrentProjectMaterials { get; set; } = new ObservableCollection<ProjectMaterial>();
         public ObservableCollection<CargoItem> CargoItems { get; set; } = new ObservableCollection<CargoItem>();
+        public ObservableCollection<CargoItem> FleetCarrierCargoItems { get; set; } = new ObservableCollection<CargoItem>();
+        public ObservableCollection<CarrierMaterialStatus> CarrierMaterialOverview { get; set; } = new();
+
+
         private string _lastUpdate;
         public string LastUpdate
         {
@@ -519,6 +523,32 @@ namespace EliteDangerousStationManager
                 inaraTimer.Start();
             }
         }
+        private void UpdateCarrierMaterialOverview()
+        {
+            CarrierMaterialOverview.Clear();
+
+            foreach (var item in journalProcessor.FleetCarrierCargoItems)
+            {
+                var match = CurrentProjectMaterials.FirstOrDefault(m =>
+                    string.Equals(m.Material, item.Name, StringComparison.OrdinalIgnoreCase));
+
+                int stillNeeded = 0;
+
+                if (match != null)
+                {
+                    int remaining = match.Required - match.Provided;
+                    stillNeeded = Math.Max(remaining - item.Quantity, 0);
+                }
+
+                CarrierMaterialOverview.Add(new CarrierMaterialStatus
+                {
+                    Name = item.Name,
+                    Transferred = item.Quantity,
+                    StillNeeded = stillNeeded
+                });
+            }
+        }
+
 
 
         private void StartTimer()
@@ -533,6 +563,8 @@ namespace EliteDangerousStationManager
 
                 // 🔄 Refresh journal data (may reload Projects list)
                 RefreshJournalData();
+                RefreshCarrierCargo();
+                UpdateCarrierMaterialOverview();
 
                 // 🔁 Restore selection
                 var restored = Projects.Where(p => selectedIds.Contains(p.MarketId)).ToList();
@@ -603,6 +635,13 @@ namespace EliteDangerousStationManager
             }
         }
 
+        private void RefreshCarrierCargo()
+        {
+            FleetCarrierCargoItems.Clear();
+            foreach (var item in journalProcessor.FleetCarrierCargoItems)
+                FleetCarrierCargoItems.Add(item);
+        }
+
 
         private void OwnerProjectButton_Click(object sender, RoutedEventArgs e)
         {
@@ -641,5 +680,44 @@ namespace EliteDangerousStationManager
         public event PropertyChangedEventHandler PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string name = null) =>
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
+        private void RefreshCargoButton_Click(object sender, RoutedEventArgs e)
+        {
+            FleetCarrierCargoItems.Clear();
+            Logger.Log("Fleet Carrier cargo list cleared.", "Info");
+        }
+
+        private void Button_Click(object sender, RoutedEventArgs e)
+        {
+            Logger.Log("Manual refresh triggered.", "Info");
+
+            // 🔹 Store selected MarketIds
+            var selectedIds = SelectedProjects.Select(p => p.MarketId).ToHashSet();
+
+            // 🔄 Refresh journal and cargo data
+            RefreshJournalData();         // Updates ProjectResources in DB
+            RefreshCarrierCargo();        // Updates in-memory cargo list
+
+            // 🔁 Restore selected projects
+            var restored = Projects.Where(p => selectedIds.Contains(p.MarketId)).ToList();
+            SelectedProjects.Clear();
+            foreach (var p in restored)
+                SelectedProjects.Add(p);
+
+            // ✅ Reload materials from updated DB
+            if (SelectedProjects.Count > 0)
+            {
+                LoadMaterialsForProjects(SelectedProjects);  // Reloads required materials
+                overlayManager.ShowOverlay(CurrentProjectMaterials);
+            }
+            else
+            {
+                Logger.Log("No projects selected during manual refresh.", "Info");
+                Dispatcher.Invoke(() => CurrentProjectMaterials.Clear());
+            }
+
+            LastUpdate = DateTime.Now.ToString("HH:mm:ss");
+        }
+
     }
 }

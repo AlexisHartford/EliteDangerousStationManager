@@ -4,7 +4,7 @@
         Title="Elite Dangerous Station Manager | Colonial Operations Command" 
         Height="900" Width="1400"
         Background="#FF0A0A0A"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen" Icon="/file_00000000b05c622f99b88bdc0c151db8.ico">
 
     <Window.Resources>
         <!-- Styles -->
@@ -101,19 +101,27 @@
         </Grid.RowDefinitions>
 
         <!-- Header -->
-        <Border Grid.Row="0" Style="{StaticResource PanelStyle}" Padding="20" Margin="5,5,5,5">
-            <StackPanel HorizontalAlignment="Center">
-                <TextBlock Text="STATION MANAGER" 
-                          FontSize="36" 
-                          FontWeight="Bold" 
-                          Foreground="{DynamicResource HighlightBrush}"
-                          HorizontalAlignment="Center"/>
-                <TextBlock Text="COLONIAL OPERATIONS COMMAND" 
-                          FontSize="14" 
-                          Foreground="#FFCCCCCC" 
-                          HorizontalAlignment="Center"/>
-            </StackPanel>
+        <Border Grid.Row="0" Style="{StaticResource PanelStyle}" Padding="20" Margin="5">
+            <DockPanel LastChildFill="True" VerticalAlignment="Center">
+                <Image Source="/file_00000000b05c622f99b88bdc0c151db8.ico"
+               Width="64" Height="64" 
+               Margin="0,0,20,0"
+               VerticalAlignment="Center"
+               DockPanel.Dock="Left"/>
+                <StackPanel HorizontalAlignment="Center">
+                    <TextBlock Text="STATION MANAGER" 
+                       FontSize="36" 
+                       FontWeight="Bold" 
+                       Foreground="{DynamicResource HighlightBrush}"
+                       HorizontalAlignment="Center"/>
+                    <TextBlock Text="COLONIAL OPERATIONS COMMAND" 
+                       FontSize="14" 
+                       Foreground="#FFCCCCCC" 
+                       HorizontalAlignment="Center"/>
+                </StackPanel>
+            </DockPanel>
         </Border>
+
 
         <!-- Status Bar -->
         <Border Grid.Row="1" Style="{StaticResource PanelStyle}" Padding="15" Margin="5,5,5,5">
@@ -166,7 +174,7 @@
                 <Button Grid.Column="1" 
                        Content="REFRESH" 
                        Style="{StaticResource ButtonStyle}" 
-                       Margin="10,0"/>
+                       Margin="10,0" Click="Button_Click"/>
 
                 <Button Grid.Column="2" 
                        Content="View Archive" 
@@ -207,13 +215,29 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-
                         <Border Grid.Row="0" Background="{DynamicResource HighlightOverlayBrush}" Padding="15">
-                            <TextBlock Text="CURRENT CARGO" Style="{StaticResource HeaderTextStyle}"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Text="CARRIER TRANSFERRED" 
+                   Style="{StaticResource HeaderTextStyle}" 
+                   VerticalAlignment="Center" />
+
+                                <Button Grid.Column="1"
+                Content="Reset"
+                Style="{StaticResource ButtonStyle}"
+                Margin="10,0,0,0"
+                VerticalAlignment="Center"
+                Click="RefreshCargoButton_Click"/>
+                            </Grid>
                         </Border>
 
+
                         <DataGrid Grid.Row="1" 
-                  ItemsSource="{Binding CargoItems}"
+                  ItemsSource="{Binding FleetCarrierCargoItems}"
                   Background="Transparent"
                   Foreground="White"
                   GridLinesVisibility="Horizontal"
@@ -223,11 +247,13 @@
                   IsReadOnly="True"
                   Margin="10">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="Item" Binding="{Binding Name}" Width="*"/>
-                                <DataGridTextColumn Header="Quantity" Binding="{Binding Quantity}" Width="100"/>
+                                <DataGridTextColumn Header="Material" Binding="{Binding Name}" Width="*" />
+                                <DataGridTextColumn Header="Transferred" Binding="{Binding Transferred}" Width="*" />
+                                <DataGridTextColumn Header="Still Needed" Binding="{Binding StillNeeded}" Width="*" />
                             </DataGrid.Columns>
+                        
 
-                            <!-- Apply same header style as Required Materials -->
+                        <!-- Apply same header style as Required Materials -->
                             <DataGrid.ColumnHeaderStyle>
                                 <Style TargetType="DataGridColumnHeader">
                                     <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>

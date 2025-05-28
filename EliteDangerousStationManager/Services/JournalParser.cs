@@ -8,11 +8,14 @@ namespace EliteDangerousStationManager.Services
     public class JournalParser
     {
         private readonly string journalPath;
+        private readonly string commanderName;
 
-        public JournalParser(string journalDirectory)
+        public JournalParser(string journalPath, string commanderName)
         {
-            journalPath = journalDirectory;
+            journalPath = journalPath;
+            this.commanderName = commanderName;
         }
+
 
         public List<InaraEvent> GetNewInaraEvents(DateTime since)
         {
