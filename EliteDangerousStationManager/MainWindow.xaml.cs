@@ -83,8 +83,8 @@ namespace EliteDangerousStationManager
         {
 
             InitializeComponent();
-            if (inaraSender == null)
-                inaraSender = new InaraSender();
+            //if (inaraSender == null)
+            //    inaraSender = new InaraSender();
             string configPath = "settings.config";
             if (File.Exists(configPath))
             {
@@ -417,13 +417,26 @@ namespace EliteDangerousStationManager
                 }
                 else
                 {
-                    projectDb.SaveProject(new Project
+                    var existing = Projects.FirstOrDefault(p => p.MarketId == marketId);
+                    if (existing == null)
                     {
-                        MarketId = marketId,
-                        SystemName = system,
-                        StationName = station,
-                        CreatedBy = CommanderName ?? "Unknown"
-                    });
+                        var newProject = new Project
+                        {
+                            MarketId = marketId,
+                            SystemName = system,
+                            StationName = station,
+                            CreatedBy = CommanderName ?? "Unknown",
+                            CreatedAt = DateTime.Now
+                        };
+
+                        projectDb.SaveProject(newProject);
+                        Logger.Log($"New station project added: {system} / {station} (MarketID: {marketId})", "Success");
+                        Projects.Add(newProject);
+                    }
+                    else
+                    {
+                        Logger.Log($"Station project already exists: {existing.StationName} (MarketID: {marketId})", "Info");
+                    }
 
                     using var conn = new MySqlConnection(connectionString);
                     conn.Open();
