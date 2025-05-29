@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
-using System.Threading;
 using Newtonsoft.Json.Linq;
 using EliteDangerousStationManager.Models;
 using EliteDangerousStationManager.Helpers;
@@ -14,7 +13,6 @@ namespace EliteDangerousStationManager.Services
         private readonly string _journalPath;
         private readonly string commanderName;
         private readonly EddnSender eddnSender;
-        private readonly InaraSender inaraSender;
 
         private ReadState lastState = new();
         private string stateFilePath;
@@ -32,7 +30,6 @@ namespace EliteDangerousStationManager.Services
             _journalPath = journalPath;
             this.commanderName = commanderName;
             this.eddnSender = new EddnSender();
-            this.inaraSender = new InaraSender();
 
             stateFilePath = Path.Combine(_journalPath, "lastread.state");
             LoadReadState();
@@ -73,50 +70,30 @@ namespace EliteDangerousStationManager.Services
                 return null;
             }
 
+            // Determine if this is a new file
             bool isNewFile = !string.Equals(latestFile, lastState.FileName, StringComparison.OrdinalIgnoreCase);
             long startPos = isNewFile ? 0 : lastState.Position;
 
             var lines = new List<string>();
-            int maxRetries = 5;
-            int delayMilliseconds = 500;
-            int attempt = 0;
-            bool fileOpened = false;
-
-            while (attempt < maxRetries && !fileOpened)
+            using (var fs = new FileStream(latestFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
             {
-                try
-                {
-                    using (var fs = new FileStream(latestFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-                    {
-                        fs.Seek(startPos, SeekOrigin.Begin);
-                        using var sr = new StreamReader(fs);
+                fs.Seek(startPos, SeekOrigin.Begin);
+                using var sr = new StreamReader(fs);
 
-                        string line;
-                        while ((line = sr.ReadLine()) != null)
-                        {
-                            if (!string.IsNullOrWhiteSpace(line))
-                                lines.Add(line);
-                        }
-
-                        lastState.FileName = latestFile;
-                        lastState.Position = fs.Position;
-                        SaveReadState(lastState.FileName, lastState.Position);
-                    }
-                    fileOpened = true;
-                }
-                catch (IOException ex)
+                string line;
+                while ((line = sr.ReadLine()) != null)
                 {
-                    attempt++;
-                    if (attempt >= maxRetries)
-                    {
-                        Logger.Log($"Error reading journal file '{latestFile}' after {maxRetries} attempts: {ex.Message}", "Warning");
-                        return null;
-                    }
-                    Thread.Sleep(delayMilliseconds);
+                    if (!string.IsNullOrWhiteSpace(line))
+                        lines.Add(line);
                 }
+
+                lastState.FileName = latestFile;
+                lastState.Position = fs.Position;
+                SaveReadState(lastState.FileName, lastState.Position);
             }
 
             int dockedIndex = -1;
+
             for (int i = lines.Count - 1; i >= 0; i--)
             {
                 var json = JObject.Parse(lines[i]);
@@ -132,9 +109,11 @@ namespace EliteDangerousStationManager.Services
                 }
             }
 
-            if (dockedIndex == -1) return null;
 
+            // Track if docked on a FleetCarrier
             bool dockedOnFleetCarrier = false;
+            long dockedCarrierMarketId = 0;
+
             for (int i = lines.Count - 1; i >= 0; i--)
             {
                 var json = JObject.Parse(lines[i]);
@@ -142,74 +121,82 @@ namespace EliteDangerousStationManager.Services
                     json["StationType"]?.ToString() == "FleetCarrier")
                 {
                     dockedOnFleetCarrier = true;
+                    dockedCarrierMarketId = json["MarketID"]?.ToObject<long>() ?? 0;
                     break;
                 }
             }
-
-            ColonisationConstructionDepotEvent latestDepot = null;
 
             foreach (var line in lines)
             {
                 var json = JObject.Parse(line);
                 string evt = json["event"]?.ToString();
 
-                if (dockedOnFleetCarrier)
+                if (evt == "MarketSell" || evt == "MarketBuy")
                 {
-                    if (evt == "MarketSell" || evt == "MarketBuy")
+                    // Only count these if docked at FleetCarrier
+                    if (dockedOnFleetCarrier)
                     {
                         string name = json["Type_Localised"]?.ToString() ?? json["Type"]?.ToString();
                         int count = json["Count"]?.ToObject<int>() ?? 0;
 
                         if (evt == "MarketSell")
-                            AddToCarrierCargo(name, count);
+                            AddToCarrierCargo(name, count); // Sold to carrier
                         else if (evt == "MarketBuy")
-                            AddToCarrierCargo(name, -count);
+                            AddToCarrierCargo(name, -count); // Bought from carrier
                     }
-                    else if (evt == "CargoTransfer")
+                }
+                else if (evt == "CargoTransfer")
+                {
+                    var transfers = json["Transfers"] as JArray;
+                    if (transfers != null)
                     {
-                        var transfers = json["Transfers"] as JArray;
-                        if (transfers != null)
+                        foreach (var transfer in transfers)
                         {
-                            foreach (var transfer in transfers)
-                            {
-                                string direction = transfer["Direction"]?.ToString();
-                                string type = transfer["Type_Localised"]?.ToString() ?? transfer["Type"]?.ToString();
-                                int count = transfer["Count"]?.ToObject<int>() ?? 0;
+                            string direction = transfer["Direction"]?.ToString();
+                            string type = transfer["Type_Localised"]?.ToString() ?? transfer["Type"]?.ToString();
+                            int count = transfer["Count"]?.ToObject<int>() ?? 0;
 
-                                if (!string.IsNullOrEmpty(type) && count > 0)
-                                {
-                                    int quantity = direction == "tocarrier" ? count : -count;
-                                    AddToCarrierCargo(type, quantity);
-                                }
+                            if (!string.IsNullOrEmpty(type) && count > 0)
+                            {
+                                int quantity = direction == "tocarrier" ? count : -count;
+                                AddToCarrierCargo(type, quantity);
                             }
                         }
                     }
                 }
-                else
-                {
-                    if (evt == "ColonisationConstructionDepot")
-                    {
-                        var marketID = json["MarketID"]?.ToObject<long>() ?? 0;
-                        if (marketID == dockedMarketId)
-                        {
-                            latestDepot = new ColonisationConstructionDepotEvent
-                            {
-                                MarketID = marketID,
-                                ConstructionProgress = json["ConstructionProgress"]?.ToObject<double>() ?? 0,
-                                ConstructionComplete = json["ConstructionComplete"]?.ToObject<bool>() ?? false,
-                                ConstructionFailed = json["ConstructionFailed"]?.ToObject<bool>() ?? false,
-                                ResourcesRequired = json["ResourcesRequired"]?.Select(r => new ResourceRequired
-                                {
-                                    Name_Localised = r["Name_Localised"]?.ToString() ?? r["Name"]?.ToString(),
-                                    Name = r["Name"]?.ToString(),
-                                    RequiredAmount = r["RequiredAmount"]?.ToObject<int>() ?? 0,
-                                    ProvidedAmount = r["ProvidedAmount"]?.ToObject<int>() ?? 0,
-                                    Payment = r["Payment"]?.ToObject<int>() ?? 0
-                                }).ToList()
-                            };
+            }
 
-                            eddnSender.SendJournalEvent(commanderName, json);
-                        }
+
+
+            if (dockedIndex == -1) return null;
+
+            ColonisationConstructionDepotEvent latestDepot = null;
+
+            for (int i = dockedIndex; i < lines.Count; i++)
+            {
+                var json = JObject.Parse(lines[i]);
+                if (json["event"]?.ToString() == "ColonisationConstructionDepot")
+                {
+                    var marketID = json["MarketID"]?.ToObject<long>() ?? 0;
+                    if (marketID == dockedMarketId)
+                    {
+                        latestDepot = new ColonisationConstructionDepotEvent
+                        {
+                            MarketID = marketID,
+                            ConstructionProgress = json["ConstructionProgress"]?.ToObject<double>() ?? 0,
+                            ConstructionComplete = json["ConstructionComplete"]?.ToObject<bool>() ?? false,
+                            ConstructionFailed = json["ConstructionFailed"]?.ToObject<bool>() ?? false,
+                            ResourcesRequired = json["ResourcesRequired"]?.Select(r => new ResourceRequired
+                            {
+                                Name_Localised = r["Name_Localised"]?.ToString() ?? r["Name"]?.ToString(),
+                                Name = r["Name"]?.ToString(),
+                                RequiredAmount = r["RequiredAmount"]?.ToObject<int>() ?? 0,
+                                ProvidedAmount = r["ProvidedAmount"]?.ToObject<int>() ?? 0,
+                                Payment = r["Payment"]?.ToObject<int>() ?? 0
+                            }).ToList()
+                        };
+
+                        eddnSender.SendJournalEvent(commanderName, json);
                     }
                 }
             }

@@ -1,4 +1,3 @@
-using EliteDangerousStationManager.Helpers;
 using System;
 using System.IO;
 using System.Windows;
@@ -7,8 +6,7 @@ namespace EliteDangerousStationManager
 {
     public partial class SettingsWindow : Window
     {
-        string configPath = ConfigHelper.GetSettingsFilePath();
-
+        private const string ConfigFile = "settings.config";
 
         public string InaraApiKey { get; private set; }
         public string HighlightColor => ColorInput.Text.Trim();
@@ -23,9 +21,9 @@ namespace EliteDangerousStationManager
 
         private void LoadSettings()
         {
-            if (File.Exists(configPath))
+            if (File.Exists(ConfigFile))
             {
-                var lines = File.ReadAllLines(configPath);
+                var lines = File.ReadAllLines(ConfigFile);
                 if (lines.Length > 0) ApiKeyTextBox.Text = lines[0];
                 if (lines.Length > 1) ColorInput.Text = lines[1]; // highlight color
             }
@@ -33,7 +31,7 @@ namespace EliteDangerousStationManager
 
         private void SaveSettings()
         {
-            File.WriteAllLines(configPath, new[]
+            File.WriteAllLines(ConfigFile, new[]
             {
                 ApiKeyTextBox.Text.Trim(),
                 ColorInput.Text.Trim()

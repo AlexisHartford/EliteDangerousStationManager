@@ -16,7 +16,6 @@
 
   <ItemGroup>
     <Resource Include="file_00000000b05c622f99b88bdc0c151db8.ico" />
-    <Resource Include="Services\InaraSender.cs" />
   </ItemGroup>
 
   <ItemGroup>
