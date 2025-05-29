@@ -17,9 +17,10 @@ namespace EliteDangerousStationManager.Helpers
             try
             {
                 LogDirectory = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
-                    "EDStationManager"
-                );
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "EDStationManager"
+            );
+
 
                 if (!Directory.Exists(LogDirectory))
                     Directory.CreateDirectory(LogDirectory);

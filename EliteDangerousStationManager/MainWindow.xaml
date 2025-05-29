@@ -158,6 +158,7 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
@@ -189,6 +190,13 @@
                        Style="{StaticResource ButtonStyle}" 
                        Background="#FF00FF88"
                        Click="OpenSettings_Click"
+                       Margin="10,0"/>
+
+                <Button Grid.Column="4" 
+                       Content="Planner" 
+                       Style="{StaticResource ButtonStyle}" 
+                       Background="#FF00FF88"
+                       Click="OpenPlanner_Click"
                        Margin="10,0"/>
             </Grid>
         </Border>

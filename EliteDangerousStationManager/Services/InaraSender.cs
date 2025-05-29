@@ -26,7 +26,8 @@ namespace EliteDangerousStationManager.Services
         {
             try
             {
-                string configPath = "settings.config";
+                string configPath = ConfigHelper.GetSettingsFilePath();
+
                 if (File.Exists(configPath))
                 {
                     apiKey = File.ReadLines(configPath).FirstOrDefault()?.Trim();
@@ -102,7 +103,18 @@ namespace EliteDangerousStationManager.Services
 
             try
             {
-                var lines = File.ReadAllLines(journalFile);
+                var lines = new List<string>();
+                using (var fs = new FileStream(journalFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                using (var sr = new StreamReader(fs))
+                {
+                    string line;
+                    while ((line = sr.ReadLine()) != null)
+                    {
+                        if (!string.IsNullOrWhiteSpace(line))
+                            lines.Add(line);
+                    }
+                }
+
                 foreach (var line in lines)
                 {
                     if (string.IsNullOrWhiteSpace(line) || !line.Contains("event"))
@@ -346,10 +358,12 @@ namespace EliteDangerousStationManager.Services
             Logger.Log("Sending payload to Inara:", "Info");
             Logger.Log(jsonPayload, "Info");
 
-            var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-            var response = await httpClient.PostAsync(inaraEndpoint, content);
-            string result = await response.Content.ReadAsStringAsync();
-            Logger.Log($"Inara response: {result}", "Info");
+            Logger.Log("🚧 [TEST MODE] Payload prepared for Inara. Skipping HTTP POST.", "Info");
+            // Uncomment the following lines when ready to send to Inara:
+            // var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+            // var response = await httpClient.PostAsync(inaraEndpoint, content);
+            // string result = await response.Content.ReadAsStringAsync();
+            // Logger.Log($"Inara response: {result}", "Info");
         }
 
         private string FormatTimestamp(string ts)

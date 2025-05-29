@@ -25,7 +25,11 @@ namespace EliteDangerousStationManager
         private readonly ProjectDatabaseService projectDb;
         private int? lastSelectedIndex = null;
         private readonly JournalProcessor journalProcessor;
-        private readonly OverlayManager overlayManager;
+        private readonly OverlayManager overlayManager; 
+        private SettingsWindow settingsWindow;
+        private ArchiveWindow archiveWindow;
+        private ColonizationPlanner.ColonizationPlanner plannerWindow;
+
         private readonly string connectionString = ConfigurationManager.ConnectionStrings["EliteDB"].ConnectionString;
         public string CommanderName { get; private set; }
 
@@ -83,9 +87,8 @@ namespace EliteDangerousStationManager
         {
 
             InitializeComponent();
-            //if (inaraSender == null)
-            //    inaraSender = new InaraSender();
-            string configPath = "settings.config";
+            this.Closed += (s, e) => CloseChildWindows();
+            string configPath = ConfigHelper.GetSettingsFilePath();
             if (File.Exists(configPath))
             {
                 var lines = File.ReadAllLines(configPath);
@@ -119,6 +122,7 @@ namespace EliteDangerousStationManager
 
 
             this.Closed += (s, e) => overlayManager.CloseOverlay();
+            this.Closed += (s, e) => overlayManager.CloseOverlay();
 
             Logger.Log("Application started.", "Success");
 
@@ -126,6 +130,11 @@ namespace EliteDangerousStationManager
             RefreshJournalData();
             StartTimer();
         }
+        private void CloseChildWindows()
+        {
+            try { plannerWindow?.Close(); } catch { }
+        }
+
 
         private void ReadCommanderNameFromJournal()
         {
@@ -590,9 +599,13 @@ namespace EliteDangerousStationManager
 
         private void OpenArchive_Click(object sender, RoutedEventArgs e)
         {
-            var archiveWindow = new ArchiveWindow(projectDb);
-            archiveWindow.Owner = this;
-            archiveWindow.Show();
+            if (archiveWindow == null || !archiveWindow.IsLoaded)
+            {
+                archiveWindow = new ArchiveWindow(projectDb);
+                archiveWindow.Owner = this;
+                archiveWindow.Closed += (s, _) => archiveWindow = null;
+                archiveWindow.Show();
+            }
         }
         private void CompletedProjectButton_Click(object sender, RoutedEventArgs e)
         {
@@ -717,5 +730,17 @@ namespace EliteDangerousStationManager
             LastUpdate = DateTime.Now.ToString("HH:mm:ss");
         }
 
+        private void OpenPlanner_Click(object sender, RoutedEventArgs e)
+        {
+
+            if (plannerWindow == null || !plannerWindow.IsLoaded)
+            {
+                plannerWindow = new ColonizationPlanner.ColonizationPlanner();
+                plannerWindow.Owner = null;
+                plannerWindow.Closed += (s, _) => plannerWindow = null;
+                plannerWindow.Show();
+            }
+
+        }
     }
 }

@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
+using System.Threading;
 using Newtonsoft.Json.Linq;
 using EliteDangerousStationManager.Models;
 using EliteDangerousStationManager.Helpers;
@@ -76,34 +77,46 @@ namespace EliteDangerousStationManager.Services
             long startPos = isNewFile ? 0 : lastState.Position;
 
             var lines = new List<string>();
-            try
+            int maxRetries = 5;
+            int delayMilliseconds = 500;
+            int attempt = 0;
+            bool fileOpened = false;
+
+            while (attempt < maxRetries && !fileOpened)
             {
-                using (var fs = new FileStream(latestFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                try
                 {
-                    fs.Seek(startPos, SeekOrigin.Begin);
-                    using var sr = new StreamReader(fs);
-
-                    string line;
-                    while ((line = sr.ReadLine()) != null)
+                    using (var fs = new FileStream(latestFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
                     {
-                        if (!string.IsNullOrWhiteSpace(line))
-                            lines.Add(line);
-                    }
+                        fs.Seek(startPos, SeekOrigin.Begin);
+                        using var sr = new StreamReader(fs);
 
-                    lastState.FileName = latestFile;
-                    lastState.Position = fs.Position;
-                    SaveReadState(lastState.FileName, lastState.Position);
+                        string line;
+                        while ((line = sr.ReadLine()) != null)
+                        {
+                            if (!string.IsNullOrWhiteSpace(line))
+                                lines.Add(line);
+                        }
+
+                        lastState.FileName = latestFile;
+                        lastState.Position = fs.Position;
+                        SaveReadState(lastState.FileName, lastState.Position);
+                    }
+                    fileOpened = true;
+                }
+                catch (IOException ex)
+                {
+                    attempt++;
+                    if (attempt >= maxRetries)
+                    {
+                        Logger.Log($"Error reading journal file '{latestFile}' after {maxRetries} attempts: {ex.Message}", "Warning");
+                        return null;
+                    }
+                    Thread.Sleep(delayMilliseconds);
                 }
             }
-            catch (IOException ex)
-            {
-                Logger.Log($"Error reading journal file '{latestFile}': {ex.Message}", "Warning");
-                return null;
-            }
-
 
             int dockedIndex = -1;
-
             for (int i = lines.Count - 1; i >= 0; i--)
             {
                 var json = JObject.Parse(lines[i]);
