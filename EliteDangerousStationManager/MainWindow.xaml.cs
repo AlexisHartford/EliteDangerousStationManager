@@ -129,6 +129,8 @@ namespace EliteDangerousStationManager
             LoadProjects();
             RefreshJournalData();
             StartTimer();
+            inaraSender = new InaraSender();
+
         }
         private void CloseChildWindows()
         {
@@ -284,7 +286,10 @@ namespace EliteDangerousStationManager
             {
                 CurrentProjectMaterials.Clear();
                 foreach (var mat in combinedMaterials.Values.OrderBy(m => m.Material))
-                    CurrentProjectMaterials.Add(mat);
+                {
+                    if (mat.Needed > 0)
+                        CurrentProjectMaterials.Add(mat);
+                }
             });
 
             Logger.Log("Loaded combined materials for selected projects.", "Success");
@@ -455,7 +460,7 @@ namespace EliteDangerousStationManager
                         string rawName = res.Name ?? "UnknownRaw";
                         string localName = res.Name_Localised ?? res.Name ?? "Unknown";
 
-                        Logger.Log($"Writing: {localName} / {rawName} | Req: {res.RequiredAmount}, Prov: {res.ProvidedAmount}, Pay: {res.Payment}", "Debug");
+                        //Logger.Log($"Writing: {localName} / {rawName} | Req: {res.RequiredAmount}, Prov: {res.ProvidedAmount}, Pay: {res.Payment}", "Debug");
 
                         var cmd = new MySqlCommand(@"
                     INSERT INTO ProjectResources (MarketID, ResourceName, RawName, RequiredAmount, ProvidedAmount, Payment)
@@ -475,7 +480,7 @@ namespace EliteDangerousStationManager
                         try
                         {
                             int affected = cmd.ExecuteNonQuery();
-                            Logger.Log($"Updated {localName}: rows affected = {affected}", "Info");
+                            //Logger.Log($"Updated {localName}: rows affected = {affected}", "Info");
                         }
                         catch (Exception ex)
                         {
@@ -564,13 +569,16 @@ namespace EliteDangerousStationManager
             {
                 Logger.Log("Timer tick", "Info");
 
+                // 🔁 Reset journal state to force full scan
+                journalProcessor.ResetReadState(); // <--- Add this
+
                 // 🔹 Store selected MarketIds
                 var selectedIds = SelectedProjects.Select(p => p.MarketId).ToHashSet();
 
-                // 🔄 Refresh journal data (may reload Projects list)
                 RefreshJournalData();
                 RefreshCarrierCargo();
                 UpdateCarrierMaterialOverview();
+                LoadProjects();
 
                 // 🔁 Restore selection
                 var restored = Projects.Where(p => selectedIds.Contains(p.MarketId)).ToList();
@@ -578,11 +586,8 @@ namespace EliteDangerousStationManager
                 foreach (var p in restored)
                     SelectedProjects.Add(p);
 
-                // ✅ Load combined materials
                 if (SelectedProjects.Count > 0)
-                {
                     LoadMaterialsForProjects(SelectedProjects);
-                }
                 else
                 {
                     Logger.Log("No projects selected during timer tick.", "Info");
@@ -591,6 +596,7 @@ namespace EliteDangerousStationManager
 
                 LastUpdate = DateTime.Now.ToString("HH:mm:ss");
             };
+
 
             LastUpdate = DateTime.Now.ToString("HH:mm:ss");
             timer.Start();
