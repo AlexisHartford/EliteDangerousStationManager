@@ -158,6 +158,7 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
@@ -168,8 +169,8 @@
                VerticalAlignment="Center"
                Margin="0,0,10,0"/>
                 </StackPanel>
-                
-                
+
+
 
                 <Button Grid.Column="1" 
                        Content="REFRESH" 
@@ -189,6 +190,13 @@
                        Style="{StaticResource ButtonStyle}" 
                        Background="#FF00FF88"
                        Click="OpenSettings_Click"
+                       Margin="10,0"/>
+
+                <Button Grid.Column="4" 
+                       Content="Planner" 
+                       Style="{StaticResource ButtonStyle}" 
+                       Background="#FF00FF88"
+                       Click="OpenPlanner_Click"
                        Margin="10,0"/>
             </Grid>
         </Border>
@@ -251,9 +259,9 @@
                                 <DataGridTextColumn Header="Transferred" Binding="{Binding Transferred}" Width="*" />
                                 <DataGridTextColumn Header="Still Needed" Binding="{Binding StillNeeded}" Width="*" />
                             </DataGrid.Columns>
-                        
 
-                        <!-- Apply same header style as Required Materials -->
+
+                            <!-- Apply same header style as Required Materials -->
                             <DataGrid.ColumnHeaderStyle>
                                 <Style TargetType="DataGridColumnHeader">
                                     <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>
@@ -394,7 +402,7 @@
            FontWeight="Bold" 
            FontSize="14"
            Foreground="White"/>
-                                            
+
                                             <TextBlock Text="{Binding SystemName}" 
                    Foreground="#FF888888" 
                    FontSize="12" 
@@ -445,7 +453,7 @@
                                                 </MultiBinding>
                                             </Button.Visibility>
                                         </Button>
-                                    <Button Grid.Column="3"
+                                        <Button Grid.Column="3"
     Content="Completed"
     Style="{StaticResource ButtonStyle}"
     FontSize="10"
@@ -453,13 +461,13 @@
     Padding="10,5"
     Click="CompletedProjectButton_Click"
     DataContext="{Binding}">
-    <Button.Visibility>
-        <MultiBinding Converter="{StaticResource CreatorVisibilityConverter}">
-            <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="CommanderName"/>
-            <Binding Path="CreatedBy"/>
-        </MultiBinding>
-    </Button.Visibility>
-</Button>
+                                            <Button.Visibility>
+                                                <MultiBinding Converter="{StaticResource CreatorVisibilityConverter}">
+                                                    <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="CommanderName"/>
+                                                    <Binding Path="CreatedBy"/>
+                                                </MultiBinding>
+                                            </Button.Visibility>
+                                        </Button>
                                     </Grid>
                                 </Border>
                                 <DataTemplate.Triggers>

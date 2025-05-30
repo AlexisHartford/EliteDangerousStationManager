@@ -30,6 +30,10 @@ namespace EliteDangerousStationManager
         private InaraService inaraService;
         public string CommanderName { get; private set; }
 
+        private SettingsWindow settingsWindow;
+        private ArchiveWindow archiveWindow;
+        private ColonizationPlanner.ColonizationPlanner plannerWindow;
+
         public ObservableCollection<LogEntry> LogEntries => Logger.Entries;
         public ObservableCollection<Project> Projects { get; set; } = new ObservableCollection<Project>();
         public ObservableCollection<ProjectMaterial> CurrentProjectMaterials { get; set; } = new ObservableCollection<ProjectMaterial>();
@@ -83,7 +87,8 @@ namespace EliteDangerousStationManager
         {
 
             InitializeComponent();
-            string configPath = "settings.config";
+            this.Closed += (s, e) => CloseChildWindows();
+            string configPath = ConfigHelper.GetSettingsFilePath();
             if (File.Exists(configPath))
             {
                 var lines = File.ReadAllLines(configPath);
@@ -132,6 +137,11 @@ namespace EliteDangerousStationManager
             LoadProjects();
             RefreshJournalData();
             StartTimer();
+        }
+
+        private void CloseChildWindows()
+        {
+            try { plannerWindow?.Close(); } catch { }
         }
 
         private void ReadCommanderNameFromJournal()
@@ -260,12 +270,16 @@ namespace EliteDangerousStationManager
 
                     if (!combinedMaterials.TryGetValue(name, out var existing))
                     {
+                        int needed = Math.Max(required - provided, 0);
+                        if (needed == 0)
+                            continue;
+
                         combinedMaterials[name] = new ProjectMaterial
                         {
                             Material = name,
                             Required = required,
                             Provided = provided,
-                            Needed = Math.Max(required - provided, 0)
+                            Needed = needed
                         };
                     }
                     else
@@ -275,18 +289,24 @@ namespace EliteDangerousStationManager
                         existing.Needed = Math.Max(existing.Required - existing.Provided, 0);
                     }
                 }
-                reader.Close(); // MUST close reader before looping again
+
+                reader.Close(); // Required before executing the next command
             }
 
             Dispatcher.Invoke(() =>
             {
                 CurrentProjectMaterials.Clear();
-                foreach (var mat in combinedMaterials.Values.OrderBy(m => m.Material))
+                foreach (var mat in combinedMaterials.Values
+                             .Where(m => m.Needed > 0)
+                             .OrderBy(m => m.Material))
+                {
                     CurrentProjectMaterials.Add(mat);
+                }
             });
 
             Logger.Log("Loaded combined materials for selected projects.", "Success");
         }
+
 
 
 
@@ -723,5 +743,15 @@ namespace EliteDangerousStationManager
             LastUpdate = DateTime.Now.ToString("HH:mm:ss");
         }
 
+        private void OpenPlanner_Click(object sender, RoutedEventArgs e)
+        {
+            if (plannerWindow == null || !plannerWindow.IsLoaded)
+            {
+                plannerWindow = new ColonizationPlanner.ColonizationPlanner();
+                plannerWindow.Owner = null;
+                plannerWindow.Closed += (s, _) => plannerWindow = null;
+                plannerWindow.Show();
+            }
+        }
     }
 }
