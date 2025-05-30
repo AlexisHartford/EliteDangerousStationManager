@@ -245,26 +245,28 @@ namespace EliteDangerousStationManager.Services
             using var conn = new MySqlConnection(connectionString);
             conn.Open();
 
-            var cmd = new MySqlCommand("SELECT ProvidedAmount FROM ProjectResources WHERE Name = @name AND MarketId = @marketId", conn);
-            cmd.Parameters.AddWithValue("@name", materialName);
-            cmd.Parameters.AddWithValue("@marketId", marketId);
+            var cmd = new MySqlCommand("SELECT ProvidedAmount FROM ProjectResources WHERE ResourceName = @ResourceName AND MarketID = @MarketID", conn);
+            cmd.Parameters.AddWithValue("@ResourceName", materialName);
+            cmd.Parameters.AddWithValue("@MarketID", marketId);
 
             var result = cmd.ExecuteScalar();
             return result != null ? Convert.ToInt32(result) : 0;
         }
+
 
         private void UpdateMaterialProvidedAmount(string materialName, long marketId, int newAmount)
         {
             using var conn = new MySqlConnection(connectionString);
             conn.Open();
 
-            var cmd = new MySqlCommand("UPDATE ProjectMaterials SET ProvidedAmount = @amount WHERE Name = @name AND MarketId = @marketId", conn);
-            cmd.Parameters.AddWithValue("@amount", newAmount);
-            cmd.Parameters.AddWithValue("@name", materialName);
-            cmd.Parameters.AddWithValue("@marketId", marketId);
+            var cmd = new MySqlCommand("UPDATE ProjectResources SET ProvidedAmount = @Amount WHERE ResourceName = @ResourceName AND MarketID = @MarketID", conn);
+            cmd.Parameters.AddWithValue("@Amount", newAmount);
+            cmd.Parameters.AddWithValue("@ResourceName", materialName);
+            cmd.Parameters.AddWithValue("@MarketID", marketId);
 
             cmd.ExecuteNonQuery();
         }
+
 
 
         private void AddToCarrierCargo(string name, int quantity)

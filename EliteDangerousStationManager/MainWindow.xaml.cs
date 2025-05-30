@@ -202,9 +202,12 @@ namespace EliteDangerousStationManager
                 ).ToList();
             }
 
-            Projects.Clear();
-            foreach (var p in loaded)
-                Projects.Add(p);
+            Dispatcher.Invoke(() =>
+            {
+                Projects.Clear();
+                foreach (var p in loaded)
+                    Projects.Add(p);
+            });
 
         }
         private void SelectProjectButton_Click(object sender, RoutedEventArgs e)
@@ -565,43 +568,64 @@ namespace EliteDangerousStationManager
         private void StartTimer()
         {
             timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-            timer.Tick += (s, e) =>
+            timer.Tick += async (s, e) =>
             {
-                Logger.Log("Timer tick", "Info");
+                Logger.Log("Timer tick started", "Info");
 
-                // 🔁 Reset journal state to force full scan
-                journalProcessor.ResetReadState(); // <--- Add this
-
-                // 🔹 Store selected MarketIds
+                // 🔹 Save selected IDs on UI thread
                 var selectedIds = SelectedProjects.Select(p => p.MarketId).ToHashSet();
 
-                RefreshJournalData();
-                RefreshCarrierCargo();
-                UpdateCarrierMaterialOverview();
-                LoadProjects();
-
-                // 🔁 Restore selection
-                var restored = Projects.Where(p => selectedIds.Contains(p.MarketId)).ToList();
-                SelectedProjects.Clear();
-                foreach (var p in restored)
-                    SelectedProjects.Add(p);
-
-                if (SelectedProjects.Count > 0)
-                    LoadMaterialsForProjects(SelectedProjects);
-                else
+                await Task.Run(() =>
                 {
-                    Logger.Log("No projects selected during timer tick.", "Info");
-                    Dispatcher.Invoke(() => CurrentProjectMaterials.Clear());
-                }
+                    try
+                    {
+                        journalProcessor.ResetReadState(); // 🟡 Remove if not needed every tick
+                        RefreshJournalData();
+                        RefreshCarrierCargo();
+                        UpdateCarrierMaterialOverview();
+                        LoadProjects(); // ⛔ must not directly edit UI-bound collections
 
-                LastUpdate = DateTime.Now.ToString("HH:mm:ss");
+                        // 🟢 Do NOT access Projects or SelectedProjects here if bound to UI!
+                        var restoredIds = selectedIds; // safe to pass around
+                        var restored = new List<Project>();
+
+                        // ✅ Safely get a snapshot of Projects (must do on UI thread)
+                        Dispatcher.Invoke(() =>
+                        {
+                            restored = Projects.Where(p => restoredIds.Contains(p.MarketId)).ToList();
+                        });
+
+                        // ✅ Update UI-bound collections on UI thread
+                        Dispatcher.Invoke(() =>
+                        {
+                            SelectedProjects.Clear();
+                            foreach (var p in restored)
+                                SelectedProjects.Add(p);
+
+                            if (SelectedProjects.Count > 0)
+                                LoadMaterialsForProjects(SelectedProjects);
+                            else
+                            {
+                                Logger.Log("No projects selected during timer tick.", "Info");
+                                CurrentProjectMaterials.Clear();
+                            }
+
+                            LastUpdate = DateTime.Now.ToString("HH:mm:ss");
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Dispatcher.Invoke(() => MessageBox.Show(
+                            $"Timer tick failed:\n{ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error));
+                    }
+                });
+
+                Logger.Log("Timer tick complete", "Info");
             };
-
 
             LastUpdate = DateTime.Now.ToString("HH:mm:ss");
             timer.Start();
         }
-
 
         private void OpenArchive_Click(object sender, RoutedEventArgs e)
         {

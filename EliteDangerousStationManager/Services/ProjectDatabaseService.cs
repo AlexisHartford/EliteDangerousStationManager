@@ -49,14 +49,15 @@ namespace EliteDangerousStationManager.Services
         {
             using var conn = new MySqlConnection(_connectionString);
             conn.Open();
-            var cmd = new MySqlCommand(@"
-                INSERT INTO Projects (MarketID, SystemName, StationName, CreatedBy)
-                VALUES (@mid, @system, @station, @creator)
-                ON DUPLICATE KEY UPDATE 
-                    SystemName = @system, 
-                    StationName = @station, 
-                    CreatedBy = @creator;", conn);
 
+            var cmd = new MySqlCommand(@"
+        INSERT INTO Projects (MarketID, SystemName, StationName, CreatedBy)
+        VALUES (@mid, @system, @station, @creator)
+        AS new
+        ON DUPLICATE KEY UPDATE 
+            SystemName = new.SystemName,
+            StationName = new.StationName,
+            CreatedBy = CreatedBy;", conn);
 
             cmd.Parameters.AddWithValue("@mid", project.MarketId);
             cmd.Parameters.AddWithValue("@system", project.SystemName);
@@ -67,6 +68,7 @@ namespace EliteDangerousStationManager.Services
 
             Logger.Log($"Saved project {project}", "Success");
         }
+
         public void ArchiveProject(long marketId)
         {
             using var conn = new MySqlConnection(_connectionString);
