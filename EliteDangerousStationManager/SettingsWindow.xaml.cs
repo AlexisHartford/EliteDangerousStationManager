@@ -9,7 +9,6 @@ namespace EliteDangerousStationManager
     {
         string configPath = ConfigHelper.GetSettingsFilePath();
 
-
         public string InaraApiKey { get; private set; }
         public string HighlightColor => ColorInput.Text.Trim();
 

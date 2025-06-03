@@ -31,8 +31,9 @@ namespace EliteDangerousStationManager.Services
                 if (File.Exists(configPath))
                 {
                     apiKey = File.ReadLines(configPath).FirstOrDefault()?.Trim();
-                    commanderName = File.ReadLines(configPath).Skip(1).FirstOrDefault()?.Trim();
+                    commanderName = ReadCommanderNameFromJournal();
                 }
+
                 else
                 {
                     Logger.Log("settings.config not found.", "Error");
@@ -58,6 +59,44 @@ namespace EliteDangerousStationManager.Services
                 Logger.Log($"Failed to initialize InaraSender: {ex.Message}", "Error");
             }
         }
+        private string ReadCommanderNameFromJournal()
+        {
+            try
+            {
+                var latestFile = Directory.GetFiles(journalPath, "Journal.*.log")
+                    .OrderByDescending(File.GetLastWriteTime)
+                    .FirstOrDefault();
+
+                if (latestFile == null)
+                {
+                    Logger.Log("No journal file found while reading commander name.", "Warning");
+                    return "UnknownCommander";
+                }
+
+                var lines = File.ReadLines(latestFile).Reverse();
+                foreach (var line in lines)
+                {
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+
+                    var json = JObject.Parse(line);
+                    if (json["event"]?.ToString() == "Commander")
+                    {
+                        var name = json["Name"]?.ToString();
+                        Logger.Log($"Commander name from journal: {name}", "Info");
+                        return name ?? "UnknownCommander";
+                    }
+                }
+
+                Logger.Log("Commander event not found in journal.", "Warning");
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Error reading commander name from journal: {ex.Message}", "Error");
+            }
+
+            return "UnknownCommander";
+        }
+
 
         public void StartSyncTimer()
         {
@@ -127,18 +166,55 @@ namespace EliteDangerousStationManager.Services
                     switch (evt)
                     {
                         case "Reputation":
-                            inaraEvents.Add(new
                             {
-                                eventName = "setCommanderReputationMajorFaction",
-                                eventTimestamp = timestamp,
-                                eventData = new
+                                float fedRep = (json["Federation"]?.ToObject<float>() ?? 0f) / 100f;
+                                float empRep = (json["Empire"]?.ToObject<float>() ?? 0f) / 100f;
+                                float aliRep = (json["Alliance"]?.ToObject<float>() ?? 0f) / 100f;
+
+                                if (fedRep > 0)
                                 {
-                                    federationReputation = json["Federation"]?.ToObject<float>() ?? 0f,
-                                    empireReputation = json["Empire"]?.ToObject<float>() ?? 0f,
-                                    allianceReputation = json["Alliance"]?.ToObject<float>() ?? 0f
+                                    inaraEvents.Add(new
+                                    {
+                                        eventName = "setCommanderReputationMajorFaction",
+                                        eventTimestamp = timestamp,
+                                        eventData = new
+                                        {
+                                            majorfactionName = "federation",
+                                            majorfactionReputation = fedRep
+                                        }
+                                    });
                                 }
-                            });
-                            break;
+
+                                if (empRep > 0)
+                                {
+                                    inaraEvents.Add(new
+                                    {
+                                        eventName = "setCommanderReputationMajorFaction",
+                                        eventTimestamp = timestamp,
+                                        eventData = new
+                                        {
+                                            majorfactionName = "empire",
+                                            majorfactionReputation = empRep
+                                        }
+                                    });
+                                }
+
+                                if (aliRep > 0)
+                                {
+                                    inaraEvents.Add(new
+                                    {
+                                        eventName = "setCommanderReputationMajorFaction",
+                                        eventTimestamp = timestamp,
+                                        eventData = new
+                                        {
+                                            majorfactionName = "alliance",
+                                            majorfactionReputation = aliRep
+                                        }
+                                    });
+                                }
+                                break;
+                            }
+
                         case "Powerplay":
                             inaraEvents.Add(new
                             {
@@ -182,20 +258,6 @@ namespace EliteDangerousStationManager.Services
                                 }
                             });
                             break;
-                        case "MarketBuy":
-                        case "MarketSell":
-                            inaraEvents.Add(new
-                            {
-                                eventName = "addCommanderTradeProfitCommodity",
-                                eventTimestamp = timestamp,
-                                eventData = new
-                                {
-                                    commodityName = json["Type"]?.ToString(),
-                                    unitCount = json["Count"]?.ToObject<int>() ?? 0,
-                                    profit = json["TotalCost"]?.ToObject<int>() ?? 0
-                                }
-                            });
-                            break;
                         case "MaterialCollected":
                             inaraEvents.Add(new
                             {
@@ -212,34 +274,49 @@ namespace EliteDangerousStationManager.Services
                             });
                             break;
                         case "EngineerContribution":
-                            inaraEvents.Add(new
+                            if (!string.IsNullOrWhiteSpace(json["Engineer"]?.ToString()))
                             {
-                                eventName = "addCommanderEngineerCraft",
-                                eventTimestamp = timestamp,
-                                eventData = new
+                                inaraEvents.Add(new
                                 {
-                                    engineerName = json["Engineer"]?.ToString(),
-                                    commodityName = json["Commodity"]?.ToString(),
-                                    commodityCount = json["Quantity"]?.ToObject<int>() ?? 0
-                                }
-                            });
-                            break;
-                        case "EngineerProgress":
-                            inaraEvents.Add(new
-                            {
-                                eventName = "setCommanderRankEngineer",
-                                eventTimestamp = timestamp,
-                                eventData = new[]
-                                {
-                                    new
+                                    eventName = "addCommanderEngineerCraft",
+                                    eventTimestamp = timestamp,
+                                    eventData = new
                                     {
                                         engineerName = json["Engineer"]?.ToString(),
-                                        rankStage = json["Progress"]?.ToString(),
-                                        rankValue = json["Rank"]?.ToObject<int?>()
+                                        commodityName = json["Commodity"]?.ToString(),
+                                        commodityCount = json["Quantity"]?.ToObject<int>() ?? 0
+                                    }
+                                });
+                            }
+                                break;
+
+                        case "EngineerProgress":
+                            if (json["Engineers"] is JArray engineers)
+                            {
+                                foreach (var eng in engineers)
+                                {
+                                    string name = eng["Engineer"]?.ToString();
+                                    if (!string.IsNullOrWhiteSpace(name))
+                                    {
+                                        inaraEvents.Add(new
+                                        {
+                                            eventName = "setCommanderRankEngineer",
+                                            eventTimestamp = timestamp,
+                                            eventData = new[]
+                                            {
+                                                new
+                                                {
+                                                    engineerName = name,
+                                                    rankStage = eng["Progress"]?.ToString(),
+                                                    rankValue = eng["Rank"]?.ToObject<int?>()
+                                                }
+                                            }
+                                        });
                                     }
                                 }
-                            });
+                            }
                             break;
+
                         case "Docked":
                             inaraEvents.Add(new
                             {
@@ -247,9 +324,10 @@ namespace EliteDangerousStationManager.Services
                                 eventTimestamp = timestamp,
                                 eventData = new
                                 {
-                                    starSystemName = json["StarSystem"]?.ToString(),
+                                    starsystemName = json["StarSystem"]?.ToString(),
                                     stationName = json["StationName"]?.ToString(),
-                                    stationType = json["StationType"]?.ToString()
+                                    shipType = json["Ship"]?.ToString(),
+                                    shipGameID = json["ShipID"]?.ToObject<int?>()
                                 }
                             });
                             break;
@@ -260,8 +338,15 @@ namespace EliteDangerousStationManager.Services
                                 eventTimestamp = timestamp,
                                 eventData = new
                                 {
-                                    starSystemName = json["StarSystem"]?.ToString(),
-                                    systemAddress = json["SystemAddress"]?.ToObject<long?>()
+                                    starsystemName = json["StarSystem"]?.ToString(),
+                                    starsystemCoords = new[] {
+                                        json["StarPos"]?[0]?.ToObject<double>() ?? 0,
+                                        json["StarPos"]?[1]?.ToObject<double>() ?? 0,
+                                        json["StarPos"]?[2]?.ToObject<double>() ?? 0
+                                    },
+                                    jumpDistance = json["JumpDist"]?.ToObject<double?>(),
+                                    shipType = json["Ship"]?.ToString(),
+                                    shipGameID = json["ShipID"]?.ToObject<int?>()
                                 }
                             });
                             break;
@@ -347,7 +432,7 @@ namespace EliteDangerousStationManager.Services
                 {
                     appName = "ENEX Carrier Bot",
                     appVersion = "1.0",
-                    isBeingDeveloped = true,
+                    isBeingDeveloped = false,
                     APIkey = apiKey,
                     commanderName = commanderName
                 },
@@ -356,13 +441,13 @@ namespace EliteDangerousStationManager.Services
 
             string jsonPayload = JsonConvert.SerializeObject(payload, Formatting.Indented);
             Logger.Log("Sending payload to Inara:", "Info");
-            Logger.Log(jsonPayload, "Info");
+            //Logger.Log(jsonPayload, "Info");
 
-            Logger.Log("🚧 [TEST MODE] Payload prepared for Inara. Skipping HTTP POST.", "Info");
+            //Logger.Log("🚧 [TEST MODE] Payload prepared for Inara. Skipping HTTP POST.", "Info");
             // Uncomment the following lines when ready to send to Inara:
-            // var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-            // var response = await httpClient.PostAsync(inaraEndpoint, content);
-            // string result = await response.Content.ReadAsStringAsync();
+             var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+             var response = await httpClient.PostAsync(inaraEndpoint, content);
+             string result = await response.Content.ReadAsStringAsync();
             // Logger.Log($"Inara response: {result}", "Info");
         }
 

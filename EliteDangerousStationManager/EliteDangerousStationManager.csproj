@@ -16,7 +16,6 @@
 
   <ItemGroup>
     <Resource Include="file_00000000b05c622f99b88bdc0c151db8.ico" />
-    <Resource Include="Services\InaraSender.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -24,6 +23,12 @@
     <PackageReference Include="NetMQ" Version="4.0.1.15" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ApplicationDefinition Update="App.xaml">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+    </ApplicationDefinition>
   </ItemGroup>
 
   <ItemGroup>

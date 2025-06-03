@@ -110,17 +110,20 @@ namespace EliteDangerousStationManager.Services
                                 break;
 
                             case "EngineerProgress":
-                                result.Add(new InaraEvent
+                                if (!string.IsNullOrWhiteSpace(json["Engineer"]?.ToString()))
                                 {
-                                    EventName = "setCommanderRankEngineer",
-                                    Timestamp = evtTime,
-                                    Data = new
+                                    result.Add(new InaraEvent
                                     {
-                                        engineer = json["Engineer"]?.ToString(),
-                                        rank = json["Rank"]?.ToObject<int>(),
-                                        reputation = json["Reputation"]?.ToObject<double?>()
-                                    }
-                                });
+                                        EventName = "setCommanderRankEngineer",
+                                        Timestamp = evtTime,
+                                        Data = new
+                                        {
+                                            engineer = json["Engineer"]?.ToString(),
+                                            rank = json["Rank"]?.ToObject<int>(),
+                                            reputation = json["Reputation"]?.ToObject<double?>()
+                                        }
+                                    });
+                                }
                                 break;
 
                             case "Powerplay":
