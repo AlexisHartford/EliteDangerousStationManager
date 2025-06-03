@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Configuration;
@@ -6,7 +6,7 @@ using System.Data;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
-using System.Text;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -22,39 +22,26 @@ namespace EliteDangerousStationManager
 {
     public partial class MainWindow : Window, INotifyPropertyChanged
     {
-        private readonly ProjectDatabaseService projectDb;
-        private int? lastSelectedIndex = null;
+        private ProjectDatabaseService projectDb;
         private readonly JournalProcessor journalProcessor;
-        private readonly OverlayManager overlayManager; 
-        private SettingsWindow settingsWindow;
+        private readonly OverlayManager overlayManager;
+
+        private readonly string connectionString =
+            ConfigurationManager.ConnectionStrings["EliteDB"].ConnectionString;
+
+        // Re-declare archiveWindow and plannerWindow:
         private ArchiveWindow archiveWindow;
         private ColonizationPlanner.ColonizationPlanner plannerWindow;
-
-        private readonly string connectionString = ConfigurationManager.ConnectionStrings["EliteDB"].ConnectionString;
-        public string CommanderName { get; private set; }
 
         public ObservableCollection<LogEntry> LogEntries => Logger.Entries;
         public ObservableCollection<Project> Projects { get; set; } = new ObservableCollection<Project>();
         public ObservableCollection<ProjectMaterial> CurrentProjectMaterials { get; set; } = new ObservableCollection<ProjectMaterial>();
-        public ObservableCollection<CargoItem> CargoItems { get; set; } = new ObservableCollection<CargoItem>();
+
+        // Expose carrier cargo and overview to XAML
         public ObservableCollection<CargoItem> FleetCarrierCargoItems { get; set; } = new ObservableCollection<CargoItem>();
-        public ObservableCollection<CarrierMaterialStatus> CarrierMaterialOverview { get; set; } = new();
-        private InaraSender inaraSender; // <-- Add this line
-
-
-        private string _lastUpdate;
-        public string LastUpdate
-        {
-            get => _lastUpdate;
-            set
-            {
-                _lastUpdate = value;
-                OnPropertyChanged();
-            }
-        }
+        public ObservableCollection<CarrierMaterialStatus> CarrierMaterialOverview { get; set; } = new ObservableCollection<CarrierMaterialStatus>();
 
         private DispatcherTimer timer;
-        private DispatcherTimer inaraTimer;
         private Project _selectedProject;
         public Project SelectedProject
         {
@@ -70,6 +57,7 @@ namespace EliteDangerousStationManager
                 }
             }
         }
+
         private ObservableCollection<Project> _selectedProjects = new ObservableCollection<Project>();
         public ObservableCollection<Project> SelectedProjects
         {
@@ -78,16 +66,45 @@ namespace EliteDangerousStationManager
             {
                 _selectedProjects = value;
                 OnPropertyChanged();
-                UpdateCombinedMaterials();
+                if (_selectedProjects.Count == 1)
+                {
+                    LoadMaterialsForProject(_selectedProjects.First());
+                    overlayManager.ShowOverlay(CurrentProjectMaterials);
+                }
+                else if (_selectedProjects.Count > 1)
+                {
+                    LoadMaterialsForProjects(_selectedProjects);
+                    overlayManager.ShowOverlay(CurrentProjectMaterials);
+                }
+                else
+                {
+                    CurrentProjectMaterials.Clear();
+                }
             }
         }
 
+        private string _lastUpdate;
+        public string LastUpdate
+        {
+            get => _lastUpdate;
+            set
+            {
+                _lastUpdate = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public string CommanderName { get; private set; }
 
         public MainWindow()
         {
-
             InitializeComponent();
+
+            // Ensure child windows / overlays close
             this.Closed += (s, e) => CloseChildWindows();
+            this.Closed += (s, e) => overlayManager?.CloseOverlay();
+
+            // 1) Load color settings
             string configPath = ConfigHelper.GetSettingsFilePath();
             if (File.Exists(configPath))
             {
@@ -98,55 +115,153 @@ namespace EliteDangerousStationManager
                     try
                     {
                         var parsedColor = (Color)ColorConverter.ConvertFromString(color);
-                        Application.Current.Resources["HighlightBrush"] = new SolidColorBrush(parsedColor);
-                        Application.Current.Resources["HighlightOverlayBrush"] = new SolidColorBrush(Color.FromArgb(0x22, parsedColor.R, parsedColor.G, parsedColor.B));
+                        Application.Current.Resources["HighlightBrush"] =
+                            new SolidColorBrush(parsedColor);
+                        Application.Current.Resources["HighlightOverlayBrush"] =
+                            new SolidColorBrush(Color.FromArgb(0x22, parsedColor.R, parsedColor.G, parsedColor.B));
                     }
                     catch
                     {
-                        Application.Current.Resources["HighlightBrush"] = new SolidColorBrush(Colors.Orange);
-                        Application.Current.Resources["HighlightOverlayBrush"] = new SolidColorBrush(Color.FromArgb(0x22, 255, 140, 0));
+                        Application.Current.Resources["HighlightBrush"] =
+                            new SolidColorBrush(Colors.Orange);
+                        Application.Current.Resources["HighlightOverlayBrush"] =
+                            new SolidColorBrush(Color.FromArgb(0x22, 255, 140, 0));
                     }
                 }
             }
 
             DataContext = this;
 
-            string journalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                "Saved Games", "Frontier Developments", "Elite Dangerous");
+            // 2) Compute the journal folder path
+            string journalPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Saved Games",
+                "Frontier Developments",
+                "Elite Dangerous"
+            );
 
-            projectDb = new ProjectDatabaseService(connectionString);
-            journalProcessor = new JournalProcessor(journalPath, CommanderName ?? "UnknownCommander");
-            overlayManager = new OverlayManager();
+            if (!Directory.Exists(journalPath))
+            {
+                MessageBox.Show(
+                    $"Journal folder not found:\n{journalPath}",
+                    "Error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error
+                );
+                return;
+            }
 
+            // 3) Read Commander name from journal
             ReadCommanderNameFromJournal();
 
+            // 4) Delete any existing lastread.state so we re-scan from top‐of‐file
+            string stateFile = Path.Combine(journalPath, "lastread.state");
+            try
+            {
+                if (File.Exists(stateFile))
+                {
+                    File.Delete(stateFile);
+                    Logger.Log("Deleted old lastread.state for a clean start.", "Debug");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Failed to delete lastread.state: {ex.Message}", "Warning");
+            }
 
-            this.Closed += (s, e) => overlayManager.CloseOverlay();
-            this.Closed += (s, e) => overlayManager.CloseOverlay();
+            // 5) Instantiate JournalProcessor
+            journalProcessor = new JournalProcessor(journalPath, CommanderName ?? "UnknownCommander");
+
+            // Subscribe to cargo‐changed event
+            journalProcessor.CarrierCargoChanged += () =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    RefreshCarrierCargo();
+                    UpdateCarrierMaterialOverview();
+                });
+            };
+
+            // 6) Instantiate OverlayManager
+            overlayManager = new OverlayManager();
 
             Logger.Log("Application started.", "Success");
 
-            LoadProjects();
-            RefreshJournalData();
-            StartTimer();
-            inaraSender = new InaraSender();
+            // 7) Defer DB initialization & initial scan
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                Task.Run(() =>
+                {
+                    // A) Force MySQL .Open() to catch connectivity errors
+                    try
+                    {
+                        using var testConn = new MySqlConnection(connectionString);
+                        testConn.Open();
+                        testConn.Close();
 
+                        projectDb = new ProjectDatabaseService(connectionString);
+                        Dispatcher.Invoke(() => SetDatabaseStatusIndicator(true));
+                        Dispatcher.Invoke(() => LoadProjects());
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"Database unavailable at startup: {ex.Message}", "Warning");
+                        Dispatcher.Invoke(() => SetDatabaseStatusIndicator(false));
+                        projectDb = null;
+                    }
+
+                    // B) Initial journal scan
+                    try
+                    {
+                        journalProcessor.ScanForDepotEvents();
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"Initial journal scan failed: {ex.Message}", "Warning");
+                    }
+
+                    // C) Refresh UI
+                    Dispatcher.Invoke(() => ScanForDepotAndRefreshUI());
+                });
+
+                // 8) Start the 5‐second timer
+                StartTimer();
+            }), DispatcherPriority.ApplicationIdle);
         }
+
+        private void SetDatabaseStatusIndicator(bool isOnline)
+        {
+            if (isOnline)
+            {
+                StatusDot.Fill = new SolidColorBrush(Color.FromRgb(0x00, 0xFF, 0x00));
+                StatusLabel.Text = "System Online";
+            }
+            else
+            {
+                StatusDot.Fill = new SolidColorBrush(Color.FromRgb(0xFF, 0x00, 0x00));
+                StatusLabel.Text = "System Offline";
+            }
+        }
+
         private void CloseChildWindows()
         {
             try { plannerWindow?.Close(); } catch { }
+            try { archiveWindow?.Close(); } catch { }
         }
-
 
         private void ReadCommanderNameFromJournal()
         {
             try
             {
-                string journalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    "Saved Games", "Frontier Developments", "Elite Dangerous");
+                string journalPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    "Saved Games",
+                    "Frontier Developments",
+                    "Elite Dangerous"
+                );
 
                 var latestFile = Directory.GetFiles(journalPath, "Journal.*.log")
-                                          .OrderByDescending(File.GetLastWriteTime)
+                                          .OrderByDescending(File.GetLastWriteTimeUtc)
                                           .FirstOrDefault();
 
                 if (latestFile == null)
@@ -157,7 +272,9 @@ namespace EliteDangerousStationManager
 
                 using var fs = new FileStream(latestFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 using var sr = new StreamReader(fs);
-                var lines = sr.ReadToEnd().Split('\n').Reverse();
+                var lines = sr.ReadToEnd()
+                              .Split('\n')
+                              .Reverse();
 
                 foreach (var line in lines)
                 {
@@ -167,12 +284,10 @@ namespace EliteDangerousStationManager
                     if (json["event"]?.ToString() == "Commander")
                     {
                         CommanderName = json["Name"]?.ToString();
-
                         Dispatcher.Invoke(() =>
                         {
                             CommanderNameTextBlock.Text = $"Commander: {CommanderName}";
                         });
-
                         Logger.Log($"Commander detected: {CommanderName}", "Success");
                         return;
                     }
@@ -186,30 +301,250 @@ namespace EliteDangerousStationManager
             }
         }
 
-
-
         private void LoadProjects(string filter = "", int filterMode = 0)
         {
-            var loaded = projectDb.LoadProjects();
+            if (projectDb == null) return;
 
-            // Apply filtering if needed
-            if (!string.IsNullOrWhiteSpace(filter))
+            try
             {
-                string keyword = filter.ToLower();
-                loaded = loaded.Where(p =>
-                    (filterMode == 0 && p.StationName.ToLower().Contains(keyword)) ||
-                    (filterMode == 1 && (p.CreatedBy?.ToLower().Contains(keyword) ?? false))
-                ).ToList();
-            }
+                var loaded = projectDb.LoadProjects();
 
-            Dispatcher.Invoke(() =>
-            {
+                if (!string.IsNullOrWhiteSpace(filter))
+                {
+                    string keyword = filter.ToLower();
+                    loaded = loaded.Where(p =>
+                        (filterMode == 0 && p.StationName.ToLower().Contains(keyword)) ||
+                        (filterMode == 1 && (p.CreatedBy?.ToLower().Contains(keyword) ?? false))
+                    ).ToList();
+                }
+
                 Projects.Clear();
                 foreach (var p in loaded)
                     Projects.Add(p);
-            });
-
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Failed to load projects: {ex.Message}", "Warning");
+                Projects.Clear();
+            }
         }
+
+        private void StartTimer()
+        {
+            timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            timer.Tick += (s, e) =>
+            {
+                Logger.Log("Timer tick", "Info");
+
+                Task.Run(() =>
+                {
+                    try
+                    {
+                        journalProcessor.ScanForDepotEvents();
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"Journal scan failed: {ex.Message}", "Warning");
+                    }
+                    Dispatcher.Invoke(() => ScanForDepotAndRefreshUI());
+                });
+                LastUpdate = DateTime.Now.ToString("HH:mm:ss");
+            };
+
+            LastUpdate = DateTime.Now.ToString("HH:mm:ss");
+            timer.Start();
+        }
+
+        private void ScanForDepotAndRefreshUI()
+        {
+            if (projectDb != null)
+            {
+                try
+                {
+                    // Preserve which MarketIDs were selected before we reload:
+                    var selectedIds = SelectedProjects.Select(p => p.MarketId).ToHashSet();
+
+                    // If there's no search term, load all. Otherwise, re‐apply the current search filter.
+                    if (string.IsNullOrWhiteSpace(SearchBox.Text))
+                    {
+                        LoadProjects();
+                    }
+                    else
+                    {
+                        // Re‐run the same filtering logic that SearchBox_TextChanged uses:
+                        string keyword = SearchBox.Text.ToLower();
+                        int mode = SearchMode.SelectedIndex;
+
+                        var filtered = projectDb.LoadProjects().Where(p =>
+                            (mode == 0 && p.StationName.ToLower().Contains(keyword)) ||
+                            (mode == 1 && (p.CreatedBy?.ToLower().Contains(keyword) ?? false)) ||
+                            (mode == 2 && (CommanderName?.ToLower().Contains(keyword) ?? false))
+                        );
+
+                        Projects.Clear();
+                        foreach (var p in filtered)
+                            Projects.Add(p);
+                    }
+
+                    // Restore the selections
+                    SelectedProjects.Clear();
+                    foreach (var p in Projects.Where(x => selectedIds.Contains(x.MarketId)))
+                        SelectedProjects.Add(p);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"Error reloading projects: {ex.Message}", "Warning");
+                }
+            }
+
+            // Now refresh materials/UI for whatever is selected:
+            if (SelectedProjects.Count == 1)
+            {
+                LoadMaterialsForProject(SelectedProjects.First());
+                overlayManager.ShowOverlay(CurrentProjectMaterials);
+
+                // ◼ NEW: If the single selected project has no outstanding materials, auto‐archive it:
+                if (CurrentProjectMaterials.Count == 0)
+                {
+                    var toArchive = SelectedProjects.First();
+                    try
+                    {
+                        projectDb.ArchiveProject(toArchive.MarketId);
+                        Logger.Log($"Auto‐archived '{toArchive.StationName}' (no remaining materials).", "Info");
+
+                        //   1) Remove from active list, reload everything
+                        LoadProjects();
+                        SelectedProjects.Clear();
+                        CurrentProjectMaterials.Clear();
+                        overlayManager.ShowOverlay(CurrentProjectMaterials);
+
+                        //   2) If archive window is open, refresh it
+                        archiveWindow?.RefreshData();
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"Failed to auto‐archive '{toArchive.StationName}': {ex.Message}", "Warning");
+                    }
+                }
+            }
+            else if (SelectedProjects.Count > 1)
+            {
+                LoadMaterialsForProjects(SelectedProjects);
+                overlayManager.ShowOverlay(CurrentProjectMaterials);
+
+                // (If you want to auto‐archive when multiple are selected only if *all* are empty,
+                //  you could check CurrentProjectMaterials.Count == 0 here, but typically auto‐archive
+                //  makes most sense for a single project.)
+            }
+            else
+            {
+                CurrentProjectMaterials.Clear();
+            }
+        }
+
+        private void LoadMaterialsForProjects(IEnumerable<Project> projects)
+        {
+            if (projectDb == null) return;
+
+            var combined = new Dictionary<string, ProjectMaterial>();
+            try
+            {
+                using var conn = new MySqlConnection(connectionString);
+                conn.Open();
+
+                foreach (var project in projects)
+                {
+                    using var cmd = new MySqlCommand(@"
+                        SELECT ResourceName, RequiredAmount, ProvidedAmount
+                        FROM ProjectResources
+                        WHERE MarketID = @mid
+                          AND RequiredAmount > ProvidedAmount
+                        ORDER BY ResourceName;", conn);
+                    cmd.Parameters.AddWithValue("@mid", project.MarketId);
+
+                    using var reader = cmd.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        string name = reader.GetString("ResourceName");
+                        int required = reader.GetInt32("RequiredAmount");
+                        int provided = reader.GetInt32("ProvidedAmount");
+                        int needed = required - provided; // guaranteed > 0
+
+                        if (!combined.TryGetValue(name, out var existing))
+                        {
+                            combined[name] = new ProjectMaterial
+                            {
+                                Material = name,
+                                Required = required,
+                                Provided = provided,
+                                Needed = needed
+                            };
+                        }
+                        else
+                        {
+                            existing.Required += required;
+                            existing.Provided += provided;
+                            existing.Needed = Math.Max(existing.Required - existing.Provided, 0);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Error loading combined materials: {ex.Message}", "Warning");
+                combined.Clear();
+            }
+
+            CurrentProjectMaterials.Clear();
+            foreach (var mat in combined.Values.Where(m => m.Needed > 0).OrderBy(m => m.Material))
+                CurrentProjectMaterials.Add(mat);
+
+            Logger.Log($"Loaded {CurrentProjectMaterials.Count} combined materials.", "Info");
+        }
+
+        private void LoadMaterialsForProject(Project project)
+        {
+            CurrentProjectMaterials.Clear();
+            if (project == null || projectDb == null)
+                return;
+
+            try
+            {
+                using var conn = new MySqlConnection(connectionString);
+                conn.Open();
+
+                var cmd = new MySqlCommand(@"
+                    SELECT ResourceName, RequiredAmount, ProvidedAmount
+                    FROM ProjectResources
+                    WHERE MarketID = @mid
+                      AND RequiredAmount > ProvidedAmount
+                    ORDER BY ResourceName;", conn);
+                cmd.Parameters.AddWithValue("@mid", project.MarketId);
+
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    int required = reader.GetInt32("RequiredAmount");
+                    int provided = reader.GetInt32("ProvidedAmount");
+                    int needed = required - provided; // guaranteed > 0
+
+                    CurrentProjectMaterials.Add(new ProjectMaterial
+                    {
+                        Material = reader.GetString("ResourceName"),
+                        Required = required,
+                        Provided = provided,
+                        Needed = needed
+                    });
+                }
+
+                Logger.Log($"Loaded {CurrentProjectMaterials.Count} materials for {project}", "Info");
+            }
+            catch (Exception ex)
+            {
+                Logger.Log("Error loading materials: " + ex.Message, "Warning");
+            }
+        }
+
         private void SelectProjectButton_Click(object sender, RoutedEventArgs e)
         {
             if (sender is Button button && button.DataContext is Project project)
@@ -229,9 +564,16 @@ namespace EliteDangerousStationManager
 
                 if (SelectedProjects.Count > 0)
                 {
-                    LoadMaterialsForProjects(SelectedProjects); // <- supports combined materials
-                    overlayManager.ShowOverlay(CurrentProjectMaterials);
-
+                    if (SelectedProjects.Count == 1)
+                    {
+                        LoadMaterialsForProject(SelectedProjects.First());
+                        overlayManager.ShowOverlay(CurrentProjectMaterials);
+                    }
+                    else
+                    {
+                        LoadMaterialsForProjects(SelectedProjects);
+                        overlayManager.ShowOverlay(CurrentProjectMaterials);
+                    }
                 }
                 else
                 {
@@ -242,266 +584,150 @@ namespace EliteDangerousStationManager
             }
         }
 
-        private void LoadMaterialsForProjects(IEnumerable<Project> projects)
-        {
-            var combinedMaterials = new Dictionary<string, ProjectMaterial>();
-
-            using var conn = new MySqlConnection(connectionString);
-            conn.Open();
-
-            foreach (var project in projects)
-            {
-                var cmd = new MySqlCommand(@"
-            SELECT ResourceName, RequiredAmount, ProvidedAmount
-            FROM ProjectResources
-            WHERE MarketID = @mid", conn);
-
-                cmd.Parameters.AddWithValue("@mid", project.MarketId);
-                using var reader = cmd.ExecuteReader();
-
-                while (reader.Read())
-                {
-                    var name = reader.GetString("ResourceName");
-                    var required = reader.GetInt32("RequiredAmount");
-                    var provided = reader.GetInt32("ProvidedAmount");
-
-                    if (!combinedMaterials.TryGetValue(name, out var existing))
-                    {
-                        combinedMaterials[name] = new ProjectMaterial
-                        {
-                            Material = name,
-                            Required = required,
-                            Provided = provided,
-                            Needed = Math.Max(required - provided, 0)
-                        };
-                    }
-                    else
-                    {
-                        existing.Required += required;
-                        existing.Provided += provided;
-                        existing.Needed = Math.Max(existing.Required - existing.Provided, 0);
-                    }
-                }
-                reader.Close(); // MUST close reader before looping again
-            }
-
-            Dispatcher.Invoke(() =>
-            {
-                CurrentProjectMaterials.Clear();
-                foreach (var mat in combinedMaterials.Values.OrderBy(m => m.Material))
-                {
-                    if (mat.Needed > 0)
-                        CurrentProjectMaterials.Add(mat);
-                }
-            });
-
-            Logger.Log("Loaded combined materials for selected projects.", "Success");
-        }
-
-
-
-        private void UpdateCombinedMaterials()
-        {
-            CurrentProjectMaterials.Clear();
-
-            if (!SelectedProjects.Any()) return;
-
-            var combined = new Dictionary<string, ProjectMaterial>();
-
-            using var conn = new MySqlConnection(connectionString);
-            conn.Open();
-
-            foreach (var proj in SelectedProjects)
-            {
-                var cmd = new MySqlCommand(@"
-                    SELECT ResourceName, RequiredAmount, ProvidedAmount
-                    FROM ProjectResources
-                    WHERE MarketID = @mid;", conn);
-
-                cmd.Parameters.AddWithValue("@mid", proj.MarketId);
-
-                using var reader = cmd.ExecuteReader();
-                while (reader.Read())
-                {
-                    string name = reader.GetString("ResourceName");
-                    int required = reader.GetInt32("RequiredAmount");
-                    int provided = reader.GetInt32("ProvidedAmount");
-
-                    if (!combined.ContainsKey(name))
-                    {
-                        combined[name] = new ProjectMaterial
-                        {
-                            Material = name,
-                            Required = 0,
-                            Provided = 0,
-                            Needed = 0
-                        };
-                    }
-
-                    var mat = combined[name];
-                    mat.Required += required;
-                    mat.Provided += provided;
-                    mat.Needed = Math.Max(mat.Required - mat.Provided, 0);
-                }
-                reader.Close();
-            }
-
-            foreach (var mat in combined.Values.OrderBy(m => m.Material))
-            {
-                if (mat.Needed > 0)
-                    CurrentProjectMaterials.Add(mat);
-            }
-
-            Logger.Log($"Combined materials for {SelectedProjects.Count} selected projects.", "Info");
-        }
-
         private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
         {
+            if (projectDb == null) return;
+
             string keyword = SearchBox.Text.ToLower();
             int mode = SearchMode.SelectedIndex;
 
-            var filtered = projectDb.LoadProjects().Where(p =>
-                (mode == 0 && p.StationName.ToLower().Contains(keyword)) ||
-                (mode == 1 && (p.CreatedBy?.ToLower().Contains(keyword) ?? false)) ||
-                (mode == 2 && (CommanderName?.ToLower().Contains(keyword) ?? false))
-            );
-
-            Projects.Clear();
-            foreach (var proj in filtered)
-                Projects.Add(proj);
-        }
-
-
-
-        private void LoadMaterialsForProject(Project project)
-        {
-            CurrentProjectMaterials.Clear();
-            if (project == null) return;
-
             try
             {
-                using var conn = new MySqlConnection(connectionString);
-                conn.Open();
+                var filtered = projectDb.LoadProjects().Where(p =>
+                    (mode == 0 && p.StationName.ToLower().Contains(keyword)) ||
+                    (mode == 1 && (p.CreatedBy?.ToLower().Contains(keyword) ?? false)) ||
+                    (mode == 2 && (CommanderName?.ToLower().Contains(keyword) ?? false))
+                );
 
-                var cmd = new MySqlCommand(@"
-                    SELECT ResourceName, RequiredAmount, ProvidedAmount
-                    FROM ProjectResources
-                    WHERE MarketID = @mid
-                    ORDER BY ResourceName;", conn);
-
-                cmd.Parameters.AddWithValue("@mid", project.MarketId);
-
-                using var reader = cmd.ExecuteReader();
-                while (reader.Read())
-                {
-                    int required = reader.GetInt32("RequiredAmount");
-                    int provided = reader.GetInt32("ProvidedAmount");
-                    int needed = Math.Max(required - provided, 0);
-
-                    if (needed > 0)
-                    {
-                        CurrentProjectMaterials.Add(new ProjectMaterial
-                        {
-                            Material = reader.GetString("ResourceName"),
-                            Required = required,
-                            Provided = provided,
-                            Needed = needed
-                        });
-                    }
-                }
-
-                Logger.Log($"Loaded {CurrentProjectMaterials.Count} materials for {project}", "Info");
+                Projects.Clear();
+                foreach (var proj in filtered)
+                    Projects.Add(proj);
             }
             catch (Exception ex)
             {
-                Logger.Log("Error loading materials: " + ex.Message, "Error");
+                Logger.Log($"Search failed: {ex.Message}", "Warning");
             }
         }
 
-        private void RefreshJournalData()
+        private void CompletedProjectButton_Click(object sender, RoutedEventArgs e)
         {
-            var project = journalProcessor.FindLatestConstructionEvent(
-                out string system, out string station, out long marketId);
-
-            if (project != null)
+            if (sender is Button button && button.DataContext is Project project && projectDb != null)
             {
-                Logger.Log($"Found depot at MarketID {marketId} with {project.ResourcesRequired.Count} materials", "Info");
+                var result = MessageBox.Show(
+                    $"Are you sure you want to mark project '{project.StationName}' as completed?",
+                    "Confirm Completion",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
 
-                if (project.ConstructionComplete && project.ResourcesRequired.All(r => r.ProvidedAmount >= r.RequiredAmount))
+                if (result == MessageBoxResult.Yes)
                 {
-                    projectDb.ArchiveProject(marketId);
-                    Logger.Log($"Project complete at MarketID {marketId}. Removed.", "Success");
-                }
-                else
-                {
-                    var existing = Projects.FirstOrDefault(p => p.MarketId == marketId);
-                    if (existing == null)
+                    try
                     {
-                        var newProject = new Project
+                        projectDb.ArchiveProject(project.MarketId);
+                        Projects.Remove(project);
+
+                        if (SelectedProjects.Contains(project))
                         {
-                            MarketId = marketId,
-                            SystemName = system,
-                            StationName = station,
-                            CreatedBy = CommanderName ?? "Unknown",
-                            CreatedAt = DateTime.Now
-                        };
-
-                        projectDb.SaveProject(newProject);
-                        Logger.Log($"New station project added: {system} / {station} (MarketID: {marketId})", "Success");
-                        Projects.Add(newProject);
-                    }
-                    else
-                    {
-                        Logger.Log($"Station project already exists: {existing.StationName} (MarketID: {marketId})", "Info");
-                    }
-
-                    using var conn = new MySqlConnection(connectionString);
-                    conn.Open();
-
-                    foreach (var res in project.ResourcesRequired)
-                    {
-                        string rawName = res.Name ?? "UnknownRaw";
-                        string localName = res.Name_Localised ?? res.Name ?? "Unknown";
-
-                        //Logger.Log($"Writing: {localName} / {rawName} | Req: {res.RequiredAmount}, Prov: {res.ProvidedAmount}, Pay: {res.Payment}", "Debug");
-
-                        var cmd = new MySqlCommand(@"
-                    INSERT INTO ProjectResources (MarketID, ResourceName, RawName, RequiredAmount, ProvidedAmount, Payment)
-                    VALUES (@mid, @name, @raw, @req, @prov, @pay)
-                    ON DUPLICATE KEY UPDATE
-                        RequiredAmount = @req,
-                        ProvidedAmount = @prov,
-                        Payment = @pay;", conn);
-
-                        cmd.Parameters.AddWithValue("@mid", marketId);
-                        cmd.Parameters.AddWithValue("@name", localName);
-                        cmd.Parameters.AddWithValue("@raw", rawName);
-                        cmd.Parameters.AddWithValue("@req", res.RequiredAmount);
-                        cmd.Parameters.AddWithValue("@prov", res.ProvidedAmount);
-                        cmd.Parameters.AddWithValue("@pay", res.Payment);
-
-                        try
-                        {
-                            int affected = cmd.ExecuteNonQuery();
-                            //Logger.Log($"Updated {localName}: rows affected = {affected}", "Info");
+                            SelectedProjects.Remove(project);
+                            if (SelectedProjects.Count == 1)
+                            {
+                                LoadProjects();
+                                LoadMaterialsForProject(SelectedProjects.First());
+                                overlayManager.ShowOverlay(CurrentProjectMaterials);
+                            }
+                            else if (SelectedProjects.Count > 1)
+                            {
+                                LoadProjects();
+                                LoadMaterialsForProjects(SelectedProjects);
+                                overlayManager.ShowOverlay(CurrentProjectMaterials);
+                            }
+                            else
+                            {
+                                LoadProjects();
+                                CurrentProjectMaterials.Clear();
+                            }
                         }
-                        catch (Exception ex)
-                        {
-                            Logger.Log($"DB error for {localName}: {ex.Message}", "Error");
-                        }
+
+                        Logger.Log($"Project '{project.StationName}' has been archived.", "Success");
                     }
-
-                    Logger.Log($"Updated resources for MarketID {marketId}", "Success");
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"Failed to archive project: {ex.Message}", "Warning");
+                    }
                 }
-
-                LoadProjects();
-                SelectedProject = Projects.FirstOrDefault(p => p.MarketId == marketId);
-            }
-            else
-            {
-                Logger.Log("No construction depot project found in journal.", "Warning");
             }
         }
+
+        private void OwnerProjectButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.DataContext is Project proj && projectDb != null)
+            {
+                var result = MessageBox.Show(
+                    $"Are you sure you want to delete the project \"{proj.StationName}\"?\nThis cannot be undone.",
+                    "Confirm Deletion",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    try
+                    {
+                        projectDb.DeleteProject(proj.MarketId);
+                        Projects.Remove(proj);
+                        Logger.Log($"Project deleted: {proj.StationName} ({proj.MarketId})", "Success");
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Log($"Error deleting project: {ex.Message}", "Warning");
+                        MessageBox.Show("Failed to delete the project.\n" + ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                }
+            }
+        }
+
+        private void RefreshCargoButton_Click(object sender, RoutedEventArgs e)
+        {
+            // 1) Clear the in-memory list in JournalProcessor:
+            journalProcessor.FleetCarrierCargoItems.Clear();
+
+            // 2) Clear the ObservableCollection so the UI updates immediately:
+            FleetCarrierCargoItems.Clear();
+
+            // 3) Clear the CarrierMaterialOverview so “Still Needed” is reset:
+            CarrierMaterialOverview.Clear();
+
+            Logger.Log("Carrier cargo list cleared.", "Info");
+        }
+
+        private void Button_Click(object sender, RoutedEventArgs e)
+        {
+            Logger.Log("Manual refresh triggered.", "Info");
+            Task.Run(() =>
+            {
+                try
+                {
+                    journalProcessor.ScanForDepotEvents();
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"Journal scan failed: {ex.Message}", "Warning");
+                }
+                Dispatcher.Invoke(() => ScanForDepotAndRefreshUI());
+            });
+            LastUpdate = DateTime.Now.ToString("HH:mm:ss");
+        }
+
+        private void OpenArchive_Click(object sender, RoutedEventArgs e)
+        {
+            if (archiveWindow == null || !archiveWindow.IsLoaded)
+            {
+                archiveWindow = new ArchiveWindow(projectDb);
+                archiveWindow.Owner = this;
+                archiveWindow.Closed += (s, _) => archiveWindow = null;
+                archiveWindow.Show();
+            }
+        }
+
         private void OpenSettings_Click(object sender, RoutedEventArgs e)
         {
             var settingsWindow = new SettingsWindow();
@@ -528,12 +754,27 @@ namespace EliteDangerousStationManager
                 }
 
                 Logger.Log("Settings updated.", "Success");
-
-                string journalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    "Saved Games", "Frontier Developments", "Elite Dangerous");
-
             }
         }
+
+        private void OpenPlanner_Click(object sender, RoutedEventArgs e)
+        {
+            if (plannerWindow == null || !plannerWindow.IsLoaded)
+            {
+                plannerWindow = new ColonizationPlanner.ColonizationPlanner();
+                plannerWindow.Owner = null;
+                plannerWindow.Closed += (s, _) => plannerWindow = null;
+                plannerWindow.Show();
+            }
+        }
+
+        private void RefreshCarrierCargo()
+        {
+            FleetCarrierCargoItems.Clear();
+            foreach (var item in journalProcessor.FleetCarrierCargoItems)
+                FleetCarrierCargoItems.Add(item);
+        }
+
         private void UpdateCarrierMaterialOverview()
         {
             CarrierMaterialOverview.Clear();
@@ -544,7 +785,6 @@ namespace EliteDangerousStationManager
                     string.Equals(m.Material, item.Name, StringComparison.OrdinalIgnoreCase));
 
                 int stillNeeded = 0;
-
                 if (match != null)
                 {
                     int remaining = match.Required - match.Provided;
@@ -559,218 +799,11 @@ namespace EliteDangerousStationManager
                 });
             }
 
-            OnPropertyChanged(nameof(CarrierMaterialOverview)); // If needed
+            OnPropertyChanged(nameof(CarrierMaterialOverview));
         }
-
-
-
-
-        private void StartTimer()
-        {
-            timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-            timer.Tick += async (s, e) =>
-            {
-                Logger.Log("Timer tick started", "Info");
-
-                // 🔹 Save selected IDs on UI thread
-                var selectedIds = SelectedProjects.Select(p => p.MarketId).ToHashSet();
-
-                await Task.Run(() =>
-                {
-                    try
-                    {
-                        journalProcessor.ResetReadState(); // 🟡 Remove if not needed every tick
-                        RefreshJournalData();
-                        RefreshCarrierCargo();
-                        UpdateCarrierMaterialOverview();
-                        LoadProjects(); // ⛔ must not directly edit UI-bound collections
-
-                        // 🟢 Do NOT access Projects or SelectedProjects here if bound to UI!
-                        var restoredIds = selectedIds; // safe to pass around
-                        var restored = new List<Project>();
-
-                        // ✅ Safely get a snapshot of Projects (must do on UI thread)
-                        Dispatcher.Invoke(() =>
-                        {
-                            restored = Projects.Where(p => restoredIds.Contains(p.MarketId)).ToList();
-                        });
-
-                        // ✅ Update UI-bound collections on UI thread
-                        Dispatcher.Invoke(() =>
-                        {
-                            SelectedProjects.Clear();
-                            foreach (var p in restored)
-                                SelectedProjects.Add(p);
-
-                            if (SelectedProjects.Count > 0)
-                                LoadMaterialsForProjects(SelectedProjects);
-                            else
-                            {
-                                Logger.Log("No projects selected during timer tick.", "Info");
-                                CurrentProjectMaterials.Clear();
-                            }
-
-                            LastUpdate = DateTime.Now.ToString("HH:mm:ss");
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        Dispatcher.Invoke(() => MessageBox.Show(
-                            $"Timer tick failed:\n{ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error));
-                    }
-                });
-
-                Logger.Log("Timer tick complete", "Info");
-            };
-
-            LastUpdate = DateTime.Now.ToString("HH:mm:ss");
-            timer.Start();
-        }
-
-        private void OpenArchive_Click(object sender, RoutedEventArgs e)
-        {
-            if (archiveWindow == null || !archiveWindow.IsLoaded)
-            {
-                archiveWindow = new ArchiveWindow(projectDb);
-                archiveWindow.Owner = this;
-                archiveWindow.Closed += (s, _) => archiveWindow = null;
-                archiveWindow.Show();
-            }
-        }
-        private void CompletedProjectButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is Button button && button.DataContext is Project project)
-            {
-                var result = MessageBox.Show(
-                    $"Are you sure you want to mark project '{project.StationName}' as completed?",
-                    "Confirm Completion",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Question);
-
-                if (result == MessageBoxResult.Yes)
-                {
-                    try
-                    {
-                        // Archive the project in the database
-                        projectDb.ArchiveProject(project.MarketId);
-
-                        // Remove from UI list
-                        Projects.Remove(project);
-
-                        // Remove from selected projects if selected
-                        if (SelectedProjects.Contains(project))
-                        {
-                            SelectedProjects.Remove(project);
-                            LoadMaterialsForProjects(SelectedProjects);
-                            overlayManager.ShowOverlay(CurrentProjectMaterials);
-                        }
-
-                        Logger.Log($"Project '{project.StationName}' has been archived.", "Success");
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Log($"Failed to archive project: {ex.Message}", "Error");
-                    }
-                }
-            }
-        }
-
-        private void RefreshCarrierCargo()
-        {
-            FleetCarrierCargoItems.Clear();
-            foreach (var item in journalProcessor.FleetCarrierCargoItems)
-                FleetCarrierCargoItems.Add(item);
-        }
-
-
-        private void OwnerProjectButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is Button btn && btn.DataContext is Project proj)
-            {
-                // Show confirmation dialog
-                var result = MessageBox.Show(
-                    $"Are you sure you want to delete the project \"{proj.StationName}\"?\nThis cannot be undone.",
-                    "Confirm Deletion",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning);
-
-                if (result == MessageBoxResult.Yes)
-                {
-                    try
-                    {
-                        // Call your DB service to delete the project
-                        projectDb.DeleteProject(proj.MarketId);
-
-                        // Remove from UI collection
-                        Projects.Remove(proj);
-
-                        Logger.Log($"Project deleted: {proj.StationName} ({proj.MarketId})", "Success");
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Log($"Error deleting project: {ex.Message}", "Error");
-                        MessageBox.Show("Failed to delete the project.\n" + ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                    }
-                }
-            }
-        }
-
-
 
         public event PropertyChangedEventHandler PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string name = null) =>
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-
-        private void RefreshCargoButton_Click(object sender, RoutedEventArgs e)
-        {
-            journalProcessor.FleetCarrierCargoItems.Clear();
-            CarrierMaterialOverview.Clear();
-            Logger.Log("Fleet Carrier cargo list cleared.", "Info");
-        }
-
-        private void Button_Click(object sender, RoutedEventArgs e)
-        {
-            Logger.Log("Manual refresh triggered.", "Info");
-
-            // 🔹 Store selected MarketIds
-            var selectedIds = SelectedProjects.Select(p => p.MarketId).ToHashSet();
-
-            // 🔄 Refresh journal and cargo data
-            RefreshJournalData();         // Updates ProjectResources in DB
-            RefreshCarrierCargo();        // Updates in-memory cargo list
-
-            // 🔁 Restore selected projects
-            var restored = Projects.Where(p => selectedIds.Contains(p.MarketId)).ToList();
-            SelectedProjects.Clear();
-            foreach (var p in restored)
-                SelectedProjects.Add(p);
-
-            // ✅ Reload materials from updated DB
-            if (SelectedProjects.Count > 0)
-            {
-                LoadMaterialsForProjects(SelectedProjects);  // Reloads required materials
-                overlayManager.ShowOverlay(CurrentProjectMaterials);
-            }
-            else
-            {
-                Logger.Log("No projects selected during manual refresh.", "Info");
-                Dispatcher.Invoke(() => CurrentProjectMaterials.Clear());
-            }
-
-            LastUpdate = DateTime.Now.ToString("HH:mm:ss");
-        }
-
-        private void OpenPlanner_Click(object sender, RoutedEventArgs e)
-        {
-
-            if (plannerWindow == null || !plannerWindow.IsLoaded)
-            {
-                plannerWindow = new ColonizationPlanner.ColonizationPlanner();
-                plannerWindow.Owner = null;
-                plannerWindow.Closed += (s, _) => plannerWindow = null;
-                plannerWindow.Show();
-            }
-
-        }
     }
 }
