@@ -61,41 +61,85 @@ namespace EliteDangerousStationManager.Services
         }
         private string ReadCommanderNameFromJournal()
         {
-            try
+            // ‘journalPath’ is assumed to be a class‐level field holding the path to the “Elite Dangerous” folder.
+            const int maxRetries = 5;
+            const int retryDelayMs = 250;
+            int attempt = 0;
+            bool found = false;
+            string commanderName = "UnknownCommander";
+
+            // 1) Find the most recent journal file
+            string latestFile = Directory
+                .GetFiles(journalPath, "Journal.*.log")
+                .OrderByDescending(File.GetLastWriteTime)
+                .FirstOrDefault();
+
+            if (latestFile == null)
             {
-                var latestFile = Directory.GetFiles(journalPath, "Journal.*.log")
-                    .OrderByDescending(File.GetLastWriteTime)
-                    .FirstOrDefault();
+                Logger.Log("No journal file found while reading commander name.", "Warning");
+                return "UnknownCommander";
+            }
 
-                if (latestFile == null)
+            while (attempt < maxRetries && !found)
+            {
+                try
                 {
-                    Logger.Log("No journal file found while reading commander name.", "Warning");
-                    return "UnknownCommander";
-                }
+                    // Open with ReadWrite+Delete sharing so Elite can continue writing/rolling it
+                    using var fs = new FileStream(
+                        latestFile,
+                        FileMode.Open,
+                        FileAccess.Read,
+                        FileShare.ReadWrite | FileShare.Delete
+                    );
+                    using var sr = new StreamReader(fs);
 
-                var lines = File.ReadLines(latestFile).Reverse();
-                foreach (var line in lines)
-                {
-                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    // Read entire file into memory and scan backward
+                    string allText = sr.ReadToEnd();
+                    var lines = allText
+                        .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                        .Reverse();
 
-                    var json = JObject.Parse(line);
-                    if (json["event"]?.ToString() == "Commander")
+                    foreach (var line in lines)
                     {
-                        var name = json["Name"]?.ToString();
-                        Logger.Log($"Commander name from journal: {name}", "Info");
-                        return name ?? "UnknownCommander";
+                        if (string.IsNullOrWhiteSpace(line))
+                            continue;
+
+                        var json = JObject.Parse(line);
+                        if (json["event"]?.ToString() == "Commander")
+                        {
+                            commanderName = json["Name"]?.ToString() ?? "UnknownCommander";
+                            Logger.Log($"Commander name from journal: {commanderName}", "Info");
+                            found = true;
+                            break;
+                        }
                     }
+
+                    if (!found)
+                        Logger.Log("Commander event not found in journal.", "Warning");
+
+                    return commanderName;
                 }
-
-                Logger.Log("Commander event not found in journal.", "Warning");
+                catch (IOException)
+                {
+                    // File is locked—wait and retry
+                    attempt++;
+                    if (attempt < maxRetries)
+                        Thread.Sleep(retryDelayMs);
+                }
             }
-            catch (Exception ex)
+
+            // After five failed attempts, log exactly once
+            if (!found)
             {
-                Logger.Log($"Error reading commander name from journal: {ex.Message}", "Error");
+                Logger.Log(
+                    "Error reading commander name from journal: file remained locked after multiple attempts.",
+                    "Error"
+                );
             }
 
-            return "UnknownCommander";
+            return commanderName;
         }
+
 
 
         public void StartSyncTimer()

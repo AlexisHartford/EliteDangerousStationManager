@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Configuration;
 using MySql.Data.MySqlClient;
 using EliteDangerousStationManager.Models;
 using EliteDangerousStationManager.Helpers;
@@ -8,11 +9,70 @@ namespace EliteDangerousStationManager.Services
 {
     public class ProjectDatabaseService
     {
+        // Hold whichever connection string succeeded
         private readonly string _connectionString;
 
-        public ProjectDatabaseService(string connectionString)
+        // Expose it if anyone needs the raw string
+        public string ConnectionString => _connectionString;
+
+        /// <summary>
+        /// Try opening a MySQL connection to the given connectionString.
+        /// Returns true if Open() succeeds.
+        /// </summary>
+        private static bool CanConnect(string connString)
         {
-            _connectionString = connectionString;
+            try
+            {
+                using var conn = new MySqlConnection(connString);
+                conn.Open();
+                conn.Close();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Default ctor: read “PrimaryDB” from App.config; if it fails, try “FallbackDB”.
+        /// Throws if neither can be opened.
+        /// </summary>
+        public ProjectDatabaseService()
+        {
+            // Read from <connectionStrings> in App.config
+            string primary = ConfigurationManager.ConnectionStrings["PrimaryDB"]?.ConnectionString;
+            string secondary = ConfigurationManager.ConnectionStrings["FallbackDB"]?.ConnectionString;
+
+            if (!string.IsNullOrWhiteSpace(primary) && CanConnect(primary))
+            {
+                _connectionString = primary;
+                Logger.Log("Connected to PrimaryDB (108.211.228.206).", "Info");
+            }
+            else if (!string.IsNullOrWhiteSpace(secondary) && CanConnect(secondary))
+            {
+                _connectionString = secondary;
+                Logger.Log("PrimaryDB unreachable; connected to FallbackDB (192.168.10.68).", "Info");
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    "Cannot connect to either PrimaryDB or FallbackDB. Check your network or credentials."
+                );
+            }
+        }
+
+        /// <summary>
+        /// If you really want to pass a custom connection‐string at runtime,
+        /// you can still use this overload. It will validate that the string works.
+        /// </summary>
+        public ProjectDatabaseService(string explicitConnectionString)
+        {
+            if (!CanConnect(explicitConnectionString))
+                throw new InvalidOperationException("Cannot connect using the provided connection string.");
+
+            _connectionString = explicitConnectionString;
+            Logger.Log("Connected using explicit connection string.", "Info");
         }
 
         public List<Project> LoadProjects()
@@ -27,8 +87,8 @@ namespace EliteDangerousStationManager.Services
                 "ORDER BY SystemName;",
                 conn
             );
-
             using var reader = cmd.ExecuteReader();
+
             while (reader.Read())
             {
                 var project = new Project
@@ -37,13 +97,12 @@ namespace EliteDangerousStationManager.Services
                     SystemName = reader.GetString("SystemName"),
                     StationName = reader.GetString("StationName"),
                     CreatedBy = reader.IsDBNull(reader.GetOrdinal("CreatedBy"))
-                                 ? "Unknown"
-                                 : reader.GetString("CreatedBy"),
+                                  ? "Unknown"
+                                  : reader.GetString("CreatedBy"),
                     CreatedAt = reader.IsDBNull(reader.GetOrdinal("CreatedAt"))
-                                 ? DateTime.MinValue
-                                 : reader.GetDateTime("CreatedAt")
+                                  ? DateTime.MinValue
+                                  : reader.GetDateTime("CreatedAt")
                 };
-
                 projects.Add(project);
             }
 
@@ -83,7 +142,7 @@ namespace EliteDangerousStationManager.Services
             using var tx = conn.BeginTransaction();
             try
             {
-                // 1) Copy to ProjectsArchive
+                // 1) Copy row into ProjectsArchive
                 using (var insertCmd = new MySqlCommand(@"
                     INSERT INTO ProjectsArchive
                         (MarketID, SystemName, StationName, CreatedBy, CreatedAt, ArchivedAt)
@@ -130,8 +189,8 @@ namespace EliteDangerousStationManager.Services
                 ORDER BY ArchivedAt DESC;",
                 conn
             );
-
             using var reader = cmd.ExecuteReader();
+
             while (reader.Read())
             {
                 projects.Add(new ArchivedProject
@@ -148,11 +207,6 @@ namespace EliteDangerousStationManager.Services
             return projects;
         }
 
-        /// <summary>
-        /// Deletes both the project row from 'Projects' and any associated
-        /// rows in 'ProjectResources' for that MarketID. Wrapped in a transaction
-        /// to ensure both tables are updated atomically.
-        /// </summary>
         public void DeleteProject(long marketId)
         {
             using var conn = new MySqlConnection(_connectionString);
@@ -161,7 +215,7 @@ namespace EliteDangerousStationManager.Services
             using var tx = conn.BeginTransaction();
             try
             {
-                // 1) Delete any resource rows tied to this project
+                // Delete resources first
                 using (var deleteResources = new MySqlCommand(@"
                     DELETE FROM ProjectResources
                     WHERE MarketID = @mid;",
@@ -172,7 +226,7 @@ namespace EliteDangerousStationManager.Services
                     deleteResources.ExecuteNonQuery();
                 }
 
-                // 2) Delete the project row itself
+                // Then delete the project row
                 using (var deleteProject = new MySqlCommand(@"
                     DELETE FROM Projects
                     WHERE MarketID = @mid;",
