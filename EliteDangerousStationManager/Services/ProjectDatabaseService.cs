@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Configuration;
+using System.Data.Common;
 using MySql.Data.MySqlClient;
+using Microsoft.Data.Sqlite;
 using EliteDangerousStationManager.Models;
 using EliteDangerousStationManager.Helpers;
 
@@ -9,17 +11,47 @@ namespace EliteDangerousStationManager.Services
 {
     public class ProjectDatabaseService
     {
-        // Hold whichever connection string succeeded
         private readonly string _connectionString;
+        private readonly string _dbMode; // "Server" (MySQL) or "Local" (SQLite)
+        private readonly string _sqlitePath = "stations.db";
 
-        // Expose it if anyone needs the raw string
         public string ConnectionString => _connectionString;
 
-        /// <summary>
-        /// Try opening a MySQL connection to the given connectionString.
-        /// Returns true if Open() succeeds.
-        /// </summary>
-        private static bool CanConnect(string connString)
+        public ProjectDatabaseService(string dbMode = "Server")
+        {
+            _dbMode = dbMode;
+
+            if (_dbMode == "Server")
+            {
+                string primary = ConfigurationManager.ConnectionStrings["PrimaryDB"]?.ConnectionString;
+                string secondary = ConfigurationManager.ConnectionStrings["FallbackDB"]?.ConnectionString;
+
+                if (!string.IsNullOrWhiteSpace(primary) && CanConnectMySQL(primary))
+                {
+                    _connectionString = primary;
+                    Logger.Log("Connected to PrimaryDB.", "Info");
+                }
+                else if (!string.IsNullOrWhiteSpace(secondary) && CanConnectMySQL(secondary))
+                {
+                    _connectionString = secondary;
+                    Logger.Log("PrimaryDB unreachable; connected to FallbackDB.", "Info");
+                }
+                else
+                {
+                    throw new InvalidOperationException("Cannot connect to either PrimaryDB or FallbackDB.");
+                }
+            }
+            else
+            {
+                // SQLite Mode
+                _connectionString = $"Data Source={_sqlitePath}";
+                EnsureSQLiteSchema();
+                Logger.Log("Using local SQLite database (stations.db).", "Info");
+            }
+        }
+
+        // Validate MySQL connections
+        private static bool CanConnectMySQL(string connString)
         {
             try
             {
@@ -34,136 +66,132 @@ namespace EliteDangerousStationManager.Services
             }
         }
 
-        /// <summary>
-        /// Default ctor: read “PrimaryDB” from App.config; if it fails, try “FallbackDB”.
-        /// Throws if neither can be opened.
-        /// </summary>
-        public ProjectDatabaseService()
+        private DbConnection GetConnection()
         {
-            // Read from <connectionStrings> in App.config
-            string primary = ConfigurationManager.ConnectionStrings["PrimaryDB"]?.ConnectionString;
-            string secondary = ConfigurationManager.ConnectionStrings["FallbackDB"]?.ConnectionString;
+            if (_dbMode == "Server")
+                return new MySqlConnection(_connectionString);
 
-            if (!string.IsNullOrWhiteSpace(primary) && CanConnect(primary))
-            {
-                _connectionString = primary;
-                Logger.Log("Connected to PrimaryDB (108.211.228.206).", "Info");
-            }
-            else if (!string.IsNullOrWhiteSpace(secondary) && CanConnect(secondary))
-            {
-                _connectionString = secondary;
-                Logger.Log("PrimaryDB unreachable; connected to FallbackDB (192.168.10.68).", "Info");
-            }
-            else
-            {
-                throw new InvalidOperationException(
-                    "Cannot connect to either PrimaryDB or FallbackDB. Check your network or credentials."
+            return new SqliteConnection(_connectionString);
+        }
+
+        /// <summary>
+        /// Ensures SQLite tables exist if we're in Local mode.
+        /// </summary>
+        private void EnsureSQLiteSchema()
+        {
+            using var conn = new SqliteConnection(_connectionString);
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                CREATE TABLE IF NOT EXISTS Projects (
+                    MarketID INTEGER PRIMARY KEY,
+                    SystemName TEXT,
+                    StationName TEXT,
+                    CreatedBy TEXT,
+                    CreatedAt DATETIME
                 );
-            }
+                CREATE TABLE IF NOT EXISTS ProjectResources (
+                    ResourceID INTEGER PRIMARY KEY AUTOINCREMENT,
+                    MarketID INTEGER,
+                    Material TEXT,
+                    RequiredAmount INTEGER,
+                    ProvidedAmount INTEGER
+                );
+                CREATE TABLE IF NOT EXISTS ProjectsArchive (
+                    MarketID INTEGER,
+                    SystemName TEXT,
+                    StationName TEXT,
+                    CreatedBy TEXT,
+                    CreatedAt DATETIME,
+                    ArchivedAt DATETIME
+                );
+            ";
+            cmd.ExecuteNonQuery();
         }
 
-        /// <summary>
-        /// If you really want to pass a custom connection‐string at runtime,
-        /// you can still use this overload. It will validate that the string works.
-        /// </summary>
-        public ProjectDatabaseService(string explicitConnectionString)
-        {
-            if (!CanConnect(explicitConnectionString))
-                throw new InvalidOperationException("Cannot connect using the provided connection string.");
-
-            _connectionString = explicitConnectionString;
-            Logger.Log("Connected using explicit connection string.", "Info");
-        }
-
+        // ✅ Load projects
         public List<Project> LoadProjects()
         {
             var projects = new List<Project>();
-            using var conn = new MySqlConnection(_connectionString);
+            using var conn = GetConnection();
             conn.Open();
 
-            var cmd = new MySqlCommand(
-                "SELECT MarketID, SystemName, StationName, CreatedBy, CreatedAt " +
-                "FROM Projects " +
-                "ORDER BY SystemName;",
-                conn
-            );
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT MarketID, SystemName, StationName, CreatedBy, CreatedAt FROM Projects ORDER BY SystemName;";
             using var reader = cmd.ExecuteReader();
 
             while (reader.Read())
             {
-                var project = new Project
+                projects.Add(new Project
                 {
-                    MarketId = reader.GetInt64("MarketID"),
-                    SystemName = reader.GetString("SystemName"),
-                    StationName = reader.GetString("StationName"),
-                    CreatedBy = reader.IsDBNull(reader.GetOrdinal("CreatedBy"))
-                                  ? "Unknown"
-                                  : reader.GetString("CreatedBy"),
-                    CreatedAt = reader.IsDBNull(reader.GetOrdinal("CreatedAt"))
-                                  ? DateTime.MinValue
-                                  : reader.GetDateTime("CreatedAt")
-                };
-                projects.Add(project);
+                    MarketId = Convert.ToInt64(reader["MarketID"]),
+                    SystemName = reader["SystemName"].ToString(),
+                    StationName = reader["StationName"].ToString(),
+                    CreatedBy = reader["CreatedBy"] == DBNull.Value ? "Unknown" : reader["CreatedBy"].ToString(),
+                    CreatedAt = reader["CreatedAt"] == DBNull.Value ? DateTime.MinValue : Convert.ToDateTime(reader["CreatedAt"])
+                });
             }
 
-            Logger.Log($"Loaded {projects.Count} projects from database.", "Info");
             return projects;
         }
 
+        // ✅ Save project
         public void SaveProject(Project project)
         {
-            using var conn = new MySqlConnection(_connectionString);
+            using var conn = GetConnection();
             conn.Open();
 
-            var cmd = new MySqlCommand(@"
-                INSERT INTO Projects (MarketID, SystemName, StationName, CreatedBy)
-                VALUES (@mid, @system, @station, @creator)
-                ON DUPLICATE KEY UPDATE 
-                    SystemName  = @system,
-                    StationName = @station,
-                    CreatedBy   = @creator;",
-                conn
-            );
+            using var cmd = conn.CreateCommand();
+            if (_dbMode == "Server")
+            {
+                cmd.CommandText = @"
+                    INSERT INTO Projects (MarketID, SystemName, StationName, CreatedBy)
+                    VALUES (@mid, @system, @station, @creator)
+                    ON DUPLICATE KEY UPDATE 
+                        SystemName = @system,
+                        StationName = @station,
+                        CreatedBy = @creator;";
+            }
+            else
+            {
+                // SQLite doesn't support ON DUPLICATE KEY; use INSERT OR REPLACE
+                cmd.CommandText = @"
+                    INSERT OR REPLACE INTO Projects (MarketID, SystemName, StationName, CreatedBy)
+                    VALUES (@mid, @system, @station, @creator);";
+            }
 
-            cmd.Parameters.AddWithValue("@mid", project.MarketId);
-            cmd.Parameters.AddWithValue("@system", project.SystemName);
-            cmd.Parameters.AddWithValue("@station", project.StationName);
-            cmd.Parameters.AddWithValue("@creator", project.CreatedBy ?? "Unknown");
+            cmd.AddParam("@mid", project.MarketId);
+            cmd.AddParam("@system", project.SystemName);
+            cmd.AddParam("@station", project.StationName);
+            cmd.AddParam("@creator", project.CreatedBy ?? "Unknown");
 
             cmd.ExecuteNonQuery();
             Logger.Log($"Saved project {project}", "Success");
         }
 
+        // ✅ Archive project
         public void ArchiveProject(long marketId)
         {
-            using var conn = new MySqlConnection(_connectionString);
+            using var conn = GetConnection();
             conn.Open();
-
             using var tx = conn.BeginTransaction();
+
             try
             {
-                // 1) Copy row into ProjectsArchive
-                using (var insertCmd = new MySqlCommand(@"
-                    INSERT INTO ProjectsArchive
-                        (MarketID, SystemName, StationName, CreatedBy, CreatedAt, ArchivedAt)
-                    SELECT MarketID, SystemName, StationName, CreatedBy, CreatedAt, NOW()
-                    FROM Projects
-                    WHERE MarketID = @id;",
-                    conn, tx
-                ))
+                using (var insertCmd = conn.CreateCommand())
                 {
-                    insertCmd.Parameters.AddWithValue("@id", marketId);
+                    insertCmd.CommandText = @"
+                        INSERT INTO ProjectsArchive (MarketID, SystemName, StationName, CreatedBy, CreatedAt, ArchivedAt)
+                        SELECT MarketID, SystemName, StationName, CreatedBy, CreatedAt, CURRENT_TIMESTAMP
+                        FROM Projects WHERE MarketID = @id;";
+                    insertCmd.AddParam("@id", marketId);
                     insertCmd.ExecuteNonQuery();
                 }
 
-                // 2) Delete from Projects
-                using (var deleteCmd = new MySqlCommand(@"
-                    DELETE FROM Projects
-                    WHERE MarketID = @id;",
-                    conn, tx
-                ))
+                using (var deleteCmd = conn.CreateCommand())
                 {
-                    deleteCmd.Parameters.AddWithValue("@id", marketId);
+                    deleteCmd.CommandText = "DELETE FROM Projects WHERE MarketID = @id;";
+                    deleteCmd.AddParam("@id", marketId);
                     deleteCmd.ExecuteNonQuery();
                 }
 
@@ -176,64 +204,56 @@ namespace EliteDangerousStationManager.Services
                 throw;
             }
         }
-
         public List<ArchivedProject> LoadArchivedProjects()
         {
             var projects = new List<ArchivedProject>();
-            using var conn = new MySqlConnection(_connectionString);
+            using var conn = GetConnection();
             conn.Open();
 
-            var cmd = new MySqlCommand(@"
-                SELECT MarketID, SystemName, StationName, CreatedBy, CreatedAt, ArchivedAt
-                FROM ProjectsArchive
-                ORDER BY ArchivedAt DESC;",
-                conn
-            );
-            using var reader = cmd.ExecuteReader();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+        SELECT MarketID, SystemName, StationName, CreatedBy, CreatedAt, ArchivedAt
+        FROM ProjectsArchive
+        ORDER BY ArchivedAt DESC;";
 
+            using var reader = cmd.ExecuteReader();
             while (reader.Read())
             {
                 projects.Add(new ArchivedProject
                 {
-                    MarketId = reader.GetInt64("MarketID"),
-                    SystemName = reader.GetString("SystemName"),
-                    StationName = reader.GetString("StationName"),
-                    CreatedBy = reader.GetString("CreatedBy"),
-                    CreatedAt = reader.GetDateTime("CreatedAt"),
-                    ArchivedAt = reader.GetDateTime("ArchivedAt")
+                    MarketId = Convert.ToInt64(reader["MarketID"]),
+                    SystemName = reader["SystemName"].ToString(),
+                    StationName = reader["StationName"].ToString(),
+                    CreatedBy = reader["CreatedBy"].ToString(),
+                    CreatedAt = Convert.ToDateTime(reader["CreatedAt"]),
+                    ArchivedAt = Convert.ToDateTime(reader["ArchivedAt"])
                 });
             }
 
             return projects;
         }
 
+
+        // ✅ Delete project
         public void DeleteProject(long marketId)
         {
-            using var conn = new MySqlConnection(_connectionString);
+            using var conn = GetConnection();
             conn.Open();
-
             using var tx = conn.BeginTransaction();
+
             try
             {
-                // Delete resources first
-                using (var deleteResources = new MySqlCommand(@"
-                    DELETE FROM ProjectResources
-                    WHERE MarketID = @mid;",
-                    conn, tx
-                ))
+                using (var deleteResources = conn.CreateCommand())
                 {
-                    deleteResources.Parameters.AddWithValue("@mid", marketId);
+                    deleteResources.CommandText = "DELETE FROM ProjectResources WHERE MarketID = @mid;";
+                    deleteResources.AddParam("@mid", marketId);
                     deleteResources.ExecuteNonQuery();
                 }
 
-                // Then delete the project row
-                using (var deleteProject = new MySqlCommand(@"
-                    DELETE FROM Projects
-                    WHERE MarketID = @mid;",
-                    conn, tx
-                ))
+                using (var deleteProject = conn.CreateCommand())
                 {
-                    deleteProject.Parameters.AddWithValue("@mid", marketId);
+                    deleteProject.CommandText = "DELETE FROM Projects WHERE MarketID = @mid;";
+                    deleteProject.AddParam("@mid", marketId);
                     deleteProject.ExecuteNonQuery();
                 }
 
@@ -246,6 +266,18 @@ namespace EliteDangerousStationManager.Services
                 Logger.Log($"Error during DeleteProject({marketId}): {ex.Message}", "Error");
                 throw;
             }
+        }
+    }
+
+    // ✅ Helper extension to add parameters cleanly
+    public static class DbCommandExtensions
+    {
+        public static void AddParam(this DbCommand cmd, string name, object value)
+        {
+            var p = cmd.CreateParameter();
+            p.ParameterName = name;
+            p.Value = value ?? DBNull.Value;
+            cmd.Parameters.Add(p);
         }
     }
 }

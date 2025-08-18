@@ -5,6 +5,8 @@ namespace EliteDangerousStationManager.Models
 {
     public class Project : INotifyPropertyChanged
     {
+        public string Source { get; set; } // "Local" or "Server"
+
         public long MarketId { get; set; }
         public string SystemName { get; set; }
         public string StationName { get; set; }

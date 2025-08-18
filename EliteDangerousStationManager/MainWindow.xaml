@@ -79,6 +79,9 @@
                                 <DataTrigger Binding="{Binding Type}" Value="Warning">
                                     <Setter Property="Foreground" Value="#FFFFCC00"/>
                                 </DataTrigger>
+                                <DataTrigger Binding="{Binding Type}" Value="Debug">
+                                    <Setter Property="Foreground" Value="gray"/>
+                                </DataTrigger>
                                 <DataTrigger Binding="{Binding Type}" Value="Error">
                                     <Setter Property="Foreground" Value="{DynamicResource HighlightBrush}"/>
                                 </DataTrigger>
@@ -159,23 +162,29 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock x:Name="CommanderNameTextBlock"
                Text="Commander: (loading...)"
                Foreground="{DynamicResource HighlightBrush}"
                FontWeight="Bold"
                VerticalAlignment="Center"
-               Margin="0,0,10,0"/>
-                </StackPanel>
-                
-                
+               Margin="0,0,10,0" />
 
-                <Button Grid.Column="1" 
-                       Content="REFRESH" 
-                       Style="{StaticResource ButtonStyle}" 
-                       Margin="10,0" Click="Button_Click"/>
+                </StackPanel>
+
+
+
+                <Button Grid.Column="1"
+                        x:Name="ToggleOverlayButton"
+                        Content="Hide Overlay"
+                        Style="{StaticResource ButtonStyle}" 
+                        Click="ToggleOverlayButton_Click"
+                        Margin="10,0"
+                        Width="110"/>
+
 
                 <Button Grid.Column="2" 
                        Content="View Archive" 
@@ -238,7 +247,7 @@
                 Content="Reset"
                 Style="{StaticResource ButtonStyle}"
                 Margin="10,0,0,0"
-                VerticalAlignment="Center"
+                VerticalAlignment="Bottom"
                 Click="RefreshCargoButton_Click"/>
                             </Grid>
                         </Border>
@@ -301,7 +310,6 @@
                         </Border>
 
                         <DataGrid Grid.Row="1" 
-                                  x:Name="ProjectsListBox"
                   ItemsSource="{Binding CurrentProjectMaterials}"
                   Background="Transparent"
                   Foreground="White"
@@ -357,7 +365,7 @@
                         HorizontalAlignment="Right" 
                         Margin="10">
                         <TextBox x:Name="SearchBox" Width="200" TextChanged="SearchBox_TextChanged"/>
-                        <ComboBox x:Name="SearchMode" Width="120" SelectedIndex="0" Margin="5,0,0,0">
+                        <ComboBox x:Name="SearchMode" Width="120" SelectedIndex="1" Margin="5,0,0,0">
                             <ComboBoxItem Content="Project Name"/>
                             <ComboBoxItem Content="Created By"/>
                             <ComboBoxItem Content="System Name"/>
@@ -365,9 +373,11 @@
                     </StackPanel>
 
                     <ListBox Grid.Row="1"
+                            x:Name="ProjectsListBox"
                             ItemsSource="{Binding Projects}"
                             Background="Transparent"
                             BorderThickness="0"
+                            SelectionMode="Extended"
                             Margin="10">
                         <ListBox.ItemTemplate>
                             <DataTemplate>
@@ -419,14 +429,20 @@
                    Foreground="#FF666666"
                    FontSize="10"
                    Margin="0,2,0,0"/>
+                                            <TextBlock Text="{Binding Source}" 
+                   Foreground="{Binding Source, Converter={StaticResource SourceColorConverter}}" 
+                   FontSize="10" 
+                   FontWeight="Bold"
+                   Margin="0,2,0,0"/>
+
                                         </StackPanel>
 
                                         <Button Grid.Column="1"
-        Style="{StaticResource ButtonStyle}" 
-        FontSize="10" 
-        Height="35"
-        Padding="10,5"
-        Click="SelectProjectButton_Click">
+                                            Style="{StaticResource ButtonStyle}" 
+                                            FontSize="10" 
+                                            Height="35"
+                                            Padding="10,5"
+                                            Click="SelectProjectButton_Click">
                                             <Button.Content>
                                                 <MultiBinding Converter="{StaticResource ProjectSelectTextConverter}">
                                                     <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="SelectedProjects"/>
@@ -439,13 +455,13 @@
 
 
                                         <Button Grid.Column="2"
-    Content="DELETE"
-    Style="{StaticResource ButtonStyle}"
-    FontSize="10"
-    Height="35"
-    Padding="10,5"
-    Click="OwnerProjectButton_Click"
-    DataContext="{Binding}">
+                                            Content="DELETE"
+                                            Style="{StaticResource ButtonStyle}"
+                                            FontSize="10"
+                                            Height="35"
+                                            Padding="10,5"
+                                            Click="OwnerProjectButton_Click"
+                                            DataContext="{Binding}">
                                             <Button.Visibility>
                                                 <MultiBinding Converter="{StaticResource CreatorVisibilityConverter}">
                                                     <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="CommanderName"/>
@@ -454,20 +470,34 @@
                                             </Button.Visibility>
                                         </Button>
                                     <Button Grid.Column="3"
-    Content="Completed"
-    Style="{StaticResource ButtonStyle}"
-    FontSize="10"
-    Height="35"
-    Padding="10,5"
-    Click="CompletedProjectButton_Click"
-    DataContext="{Binding}">
-    <Button.Visibility>
-        <MultiBinding Converter="{StaticResource CreatorVisibilityConverter}">
-            <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="CommanderName"/>
-            <Binding Path="CreatedBy"/>
-        </MultiBinding>
-    </Button.Visibility>
-</Button>
+                                        Content="Completed"
+                                        Style="{StaticResource ButtonStyle}"
+                                        FontSize="10"
+                                        Height="35"
+                                        Padding="10,5"
+                                        Click="CompletedProjectButton_Click"
+                                        DataContext="{Binding}">
+                                        <Button.Visibility>
+                                            <MultiBinding Converter="{StaticResource CreatorVisibilityConverter}">
+                                                <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="CommanderName"/>
+                                                <Binding Path="CreatedBy"/>
+                                            </MultiBinding>
+                                        </Button.Visibility>
+                                    </Button>
+                                        <Button Grid.Column="4"
+                                            Content="⇪ Sync"
+                                            Style="{StaticResource ButtonStyle}"
+                                            FontSize="10"
+                                            Height="35"
+                                            Padding="10,5"
+                                            Background="#FF00AAFF"
+                                            Click="SyncProjectButton_Click"
+                                            DataContext="{Binding}">
+                                            <Button.Visibility>
+                                                <Binding Path="Source" Converter="{StaticResource LocalOnlyVisibilityConverter}" />
+                                            </Button.Visibility>
+                                        </Button>
+
                                     </Grid>
                                 </Border>
                                 <DataTemplate.Triggers>

@@ -6,28 +6,13 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using EliteDangerousStationManager.Models;
+
 
 namespace ColonizationPlanner
 {
     public partial class ColonizationPlanner : Window
     {
-        public class ColonyStructure
-        {
-            public string Name { get; set; }
-            public string MaxPad { get; set; }
-            public string Prerequisites { get; set; }
-            public string T2 { get; set; }
-            public string T3 { get; set; }
-            public int Security { get; set; }
-            public int TechLevel { get; set; }
-            public int Wealth { get; set; }
-            public int StandardOfLiving { get; set; }
-            public int DevelopmentLevel { get; set; }
-            public string FacilityEconomy { get; set; }
-            public string EconomyInfluence { get; set; }
-            public int InitPopInc { get; set; }
-            public int MaxPopInc { get; set; }
-        }
         public class SelectedStructure
         {
             public string Name { get; set; }
@@ -747,20 +732,37 @@ namespace ColonizationPlanner
                 _ => new SolidColorBrush(Color.FromRgb(110, 230, 110))
             };
         }
+        private void ShowAllStructures_Click(object sender, RoutedEventArgs e)
+        {
+            var viewer = new AllStructuresWindow(allStructures);
+            viewer.Show(); // ✅ Non-modal → allows background interaction
+        }
+
 
         private void UpdateTotals()
         {
             int sec = 0, tech = 0, wealth = 0, sol = 0, dev = 0;
+            int t2 = 0, t3 = 0;
 
-            foreach (var cb in comboBoxes)
+            for (int i = 0; i < comboBoxes.Count; i++)
             {
+                var cb = comboBoxes[i];
+
                 if (cb.SelectedItem is ColonyStructure s)
                 {
+                    // Always include these
                     sec += s.Security;
                     tech += s.TechLevel;
                     wealth += s.Wealth;
                     sol += s.StandardOfLiving;
                     dev += s.DevelopmentLevel;
+
+                    // Skip T2/T3 for first row only
+                    if (i > 0)
+                    {
+                        if (int.TryParse(s.T2, out int t2Val)) t2 += t2Val;
+                        if (int.TryParse(s.T3, out int t3Val)) t3 += t3Val;
+                    }
                 }
             }
 
@@ -769,6 +771,10 @@ namespace ColonizationPlanner
             TotalWealth.Text = $"Wealth: {wealth}";
             TotalSoL.Text = $"SoL: {sol}";
             TotalDev.Text = $"Dev: {dev}";
+            TotalT2.Text = $"T2: {t2}";
+            TotalT3.Text = $"T3: {t3}";
         }
+
+
     }
 }

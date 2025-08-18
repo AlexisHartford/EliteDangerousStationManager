@@ -17,72 +17,96 @@ namespace EliteDangerousStationManager
         public ArchiveWindow(ProjectDatabaseService db)
         {
             InitializeComponent();
+            _db = db; // may be null if DB service failed
+            LoadData();
+        }
 
-            // Store the passed-in service (could be null if DB failed earlier)
-            _db = db;
-
-            // Load data now (may be empty if DB is down)
+        /// <summary>
+        /// Reloads archived projects from the database and refreshes the list.
+        /// </summary>
+        public void RefreshData()
+        {
             LoadData();
         }
 
         private void LoadData()
         {
-            // If _db is null, skip trying to load
-            if (_db == null)
-            {
-                _allArchived = new List<ArchivedProject>();
-                ArchivedList.ItemsSource = _allArchived;
-                return;
-            }
+            _allArchived.Clear();
 
+            // 🟢 Always load LOCAL archive
             try
             {
-                // Attempt to pull archived projects; if this throws, we catch it below
-                _allArchived = _db.LoadArchivedProjects();
+                var localDb = new ProjectDatabaseService("Local");
+                var localArchives = localDb.LoadArchivedProjects();
+
+                foreach (var proj in localArchives)
+                    proj.Source = "Local";   // (optional) Tag where it came from
+
+                _allArchived.AddRange(localArchives);
+                Logger.Log($"📁 Loaded {localArchives.Count} LOCAL archived projects.", "Info");
             }
             catch (Exception ex)
             {
-                // Log and fall back to an empty list
-                Logger.Log($"Failed to load archived projects: {ex.Message}", "Warning");
-                _allArchived = new List<ArchivedProject>();
+                Logger.Log($"ArchiveWindow: Failed to load LOCAL archives: {ex.Message}", "Warning");
             }
 
-            // Bind whatever we have (empty or real)
+            // 🌐 Load SERVER archive only if “Public”/Server mode is enabled
+            if (App.CurrentDbMode == "Server")
+            {
+                try
+                {
+                    var serverDb = new ProjectDatabaseService("Server");
+                    var serverArchives = serverDb.LoadArchivedProjects();
+
+                    foreach (var proj in serverArchives)
+                        proj.Source = "Server";
+
+                    _allArchived.AddRange(serverArchives);
+                    Logger.Log($"🌐 Loaded {serverArchives.Count} SERVER archived projects.", "Info");
+                }
+                catch (Exception ex)
+                {
+                    Logger.Log($"ArchiveWindow: Failed to load SERVER archives: {ex.Message}", "Warning");
+                }
+            }
+            else
+            {
+                Logger.Log("⚠ Server mode disabled — skipping server archive load.", "Warning");
+            }
+
             ArchivedList.ItemsSource = _allArchived;
         }
 
         private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
         {
-            // Always guard against _allArchived being null
-            if (_allArchived == null || _allArchived.Count == 0)
+            if (_allArchived == null || !_allArchived.Any())
             {
                 ArchivedList.ItemsSource = new List<ArchivedProject>();
                 return;
             }
 
-            string keyword = SearchBox.Text.ToLower();
+            string keyword = (SearchBox.Text ?? string.Empty).ToLowerInvariant();
             int mode = SearchMode.SelectedIndex;
 
             try
             {
                 var filtered = _allArchived.Where(p =>
-                    (mode == 0 && p.StationName?.ToLower().Contains(keyword) == true) ||
-                    (mode == 1 && p.CreatedBy?.ToLower().Contains(keyword) == true) ||
-                    (mode == 2 && p.SystemName?.ToLower().Contains(keyword) == true)
+                    mode switch
+                    {
+                        0 => p.StationName?.ToLowerInvariant().Contains(keyword) == true,
+                        1 => p.CreatedBy?.ToLowerInvariant().Contains(keyword) == true,
+                        2 => p.SystemName?.ToLowerInvariant().Contains(keyword) == true,
+                        _ => true
+                    }
                 ).ToList();
 
                 ArchivedList.ItemsSource = filtered;
             }
             catch (Exception ex)
             {
-                // In case something odd happens (e.g. null fields), log and reset filter
-                Logger.Log($"Search error in ArchiveWindow: {ex.Message}", "Warning");
+                Logger.Log($"ArchiveWindow: Search error: {ex.Message}", "Warning");
                 ArchivedList.ItemsSource = _allArchived;
             }
-        }
-        public void RefreshData()
-        {
-            LoadData();
         }
     }
 }

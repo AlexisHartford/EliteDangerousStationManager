@@ -17,5 +17,8 @@ namespace EliteDangerousStationManager.Models
         {
             return $"{SystemName} / {StationName} by {CreatedBy} - Duration: {Duration:%d}d {Duration:hh\\:mm}";
         }
+
+        // 🆕 Add this property
+        public string Source { get; set; }  // "Local" or "Server"
     }
 }

@@ -1,0 +1,106 @@
+﻿<Window x:Class="ColonizationPlanner.AllStructuresWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:ColonizationPlanner"
+        Title="All Structures" Height="600" Width="1100"
+        Background="#1E1E1E"
+        WindowStartupLocation="CenterOwner">
+
+    <Window.Resources>
+        <local:StatColorConverter x:Key="StatColorConverter" />
+    </Window.Resources>
+
+    <Grid Margin="10">
+        <DataGrid x:Name="StructureDataGrid"
+                  AutoGenerateColumns="False"
+                  HeadersVisibility="Column"
+                  CanUserAddRows="False"
+                  Background="#2E2E2E"
+                  Foreground="White"
+                  GridLinesVisibility="Horizontal"
+                  RowBackground="#1E1E1E"
+                  AlternatingRowBackground="#252525">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="*" />
+                <DataGridTextColumn Header="Max Pad" Binding="{Binding MaxPad}" Width="80"/>
+                <DataGridTextColumn Header="Prerequisites" Binding="{Binding Prerequisites}" Width="140"/>
+
+                <!-- Color-coded numeric columns -->
+                <DataGridTemplateColumn Header="T2" Width="40">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Border Background="{Binding T2, Converter={StaticResource StatColorConverter}}" Padding="2">
+                                <TextBlock Text="{Binding T2}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White"/>
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTemplateColumn Header="T3" Width="40">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Border Background="{Binding T3, Converter={StaticResource StatColorConverter}}" Padding="2">
+                                <TextBlock Text="{Binding T3}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White"/>
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTemplateColumn Header="Security" Width="60">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Border Background="{Binding Security, Converter={StaticResource StatColorConverter}}" Padding="2">
+                                <TextBlock Text="{Binding Security}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White"/>
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTemplateColumn Header="Tech" Width="60">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Border Background="{Binding TechLevel, Converter={StaticResource StatColorConverter}}" Padding="2">
+                                <TextBlock Text="{Binding TechLevel}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White"/>
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTemplateColumn Header="Wealth" Width="60">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Border Background="{Binding Wealth, Converter={StaticResource StatColorConverter}}" Padding="2">
+                                <TextBlock Text="{Binding Wealth}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White"/>
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTemplateColumn Header="SoL" Width="60">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Border Background="{Binding StandardOfLiving, Converter={StaticResource StatColorConverter}}" Padding="2">
+                                <TextBlock Text="{Binding StandardOfLiving}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White"/>
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTemplateColumn Header="Dev" Width="60">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Border Background="{Binding DevelopmentLevel, Converter={StaticResource StatColorConverter}}" Padding="2">
+                                <TextBlock Text="{Binding DevelopmentLevel}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White"/>
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTextColumn Header="Facility Econ" Binding="{Binding FacilityEconomy}" Width="100"/>
+                <DataGridTextColumn Header="Econ Influence" Binding="{Binding EconomyInfluence}" Width="100"/>
+                <DataGridTextColumn Header="Init Pop" Binding="{Binding InitPopInc}" Width="60"/>
+                <DataGridTextColumn Header="Max Pop" Binding="{Binding MaxPopInc}" Width="60"/>
+            </DataGrid.Columns>
+        </DataGrid>
+    </Grid>
+</Window>

@@ -26,6 +26,17 @@ namespace EliteDangerousStationManager
         private readonly JournalProcessor journalProcessor;
         private readonly OverlayManager overlayManager;
 
+        private decimal totalCostToday = 0;
+        private decimal totalSaleToday = 0;
+        private readonly HashSet<string> processedEntries = new HashSet<string>();
+        private readonly List<(DateTime Timestamp, decimal Amount)> hourlyTransactions = new();
+
+        private static bool PrimaryDbDisabledForSession = false;
+
+
+
+
+
         // We no longer keep a separate “connectionString” field; we let ProjectDatabaseService pick it up:
         // private readonly string connectionString = ConfigurationManager.ConnectionStrings["EliteDB"].ConnectionString;
 
@@ -55,7 +66,7 @@ namespace EliteDangerousStationManager
                     _selectedProject = value;
                     OnPropertyChanged();
                     LoadMaterialsForProject(_selectedProject);
-                    overlayManager.ShowOverlay(CurrentProjectMaterials);
+                    ShowOverlayIfAllowed();
                 }
             }
         }
@@ -71,12 +82,12 @@ namespace EliteDangerousStationManager
                 if (_selectedProjects.Count == 1)
                 {
                     LoadMaterialsForProject(_selectedProjects.First());
-                    overlayManager.ShowOverlay(CurrentProjectMaterials);
+                    ShowOverlayIfAllowed();
                 }
                 else if (_selectedProjects.Count > 1)
                 {
                     LoadMaterialsForProjects(_selectedProjects);
-                    overlayManager.ShowOverlay(CurrentProjectMaterials);
+                    ShowOverlayIfAllowed();
                 }
                 else
                 {
@@ -101,6 +112,7 @@ namespace EliteDangerousStationManager
         public MainWindow()
         {
             InitializeComponent();
+
 
             // Ensure child windows / overlays close
             this.Closed += (s, e) => CloseChildWindows();
@@ -153,8 +165,8 @@ namespace EliteDangerousStationManager
                 return;
             }
 
-            // 3) Read Commander name from journal
-            ReadCommanderNameFromJournal();
+            // 3) Read Commander name and selected journal file
+            string selectedJournalFile = ReadCommanderNameFromJournal();
 
             // 4) Delete any existing lastread.state so we re-scan from top‐of‐file
             string stateFile = Path.Combine(journalPath, "lastread.state");
@@ -173,6 +185,12 @@ namespace EliteDangerousStationManager
 
             // 5) Instantiate JournalProcessor
             journalProcessor = new JournalProcessor(journalPath, CommanderName ?? "UnknownCommander");
+
+            // Tell it to start from selected file if available
+            if (!string.IsNullOrWhiteSpace(selectedJournalFile))
+            {
+                journalProcessor.ForceStartFrom(selectedJournalFile);
+            }
 
             // — Re‐add this subscription —
             journalProcessor.CarrierCargoChanged += () =>
@@ -197,10 +215,9 @@ namespace EliteDangerousStationManager
             {
                 Task.Run(() =>
                 {
-                    // A) Try to initialize DB
                     try
                     {
-                        // This will use PrimaryDB → FallbackDB logic inside ProjectDatabaseService
+                        // ✅ No more dbMode. Always initialize ProjectDatabaseService normally.
                         projectDb = new ProjectDatabaseService();
                         Dispatcher.Invoke(() => SetDatabaseStatusIndicator(true));
                         Dispatcher.Invoke(() => LoadProjects());
@@ -212,7 +229,7 @@ namespace EliteDangerousStationManager
                         projectDb = null;
                     }
 
-                    // B) Perform the very first scan for depot events (off UI thread)
+                    // ✅ B) Perform the very first scan for depot events (off UI thread)
                     try
                     {
                         journalProcessor.ScanForDepotEvents();
@@ -222,27 +239,40 @@ namespace EliteDangerousStationManager
                         Logger.Log($"Initial journal scan failed: {ex.Message}", "Warning");
                     }
 
-                    // C) Refresh UI on the UI thread
-                    Dispatcher.Invoke(() => ScanForDepotAndRefreshUI());
+                    // ✅ C) Refresh UI on the UI thread
+                    Dispatcher.Invoke(async () => await ScanForDepotAndRefreshUI());
                 });
 
-                // 8) Start the 5-second timer
+                // ✅ 8) Start the 5-second timer
                 StartTimer();
             }), DispatcherPriority.ApplicationIdle);
+
+
         }
+
+
         private void RefreshCarrierCargo()
         {
-            // Clear out the old UI collection...
             FleetCarrierCargoItems.Clear();
 
-            // Copy every item from the JournalProcessor’s in‐memory list
+            Logger.Log("Refreshing carrier cargo...", "Debug");
             foreach (var item in journalProcessor.FleetCarrierCargoItems)
+            {
+                Logger.Log($"→ {item.Name} x{item.Quantity}", "Debug");
+
                 FleetCarrierCargoItems.Add(new CargoItem
                 {
                     Name = item.Name,
                     Quantity = item.Quantity
                 });
+            }
         }
+        private static string Normalize(string input)
+        {
+            return input?.ToLowerInvariant().Replace(" ", "").Trim() ?? "";
+        }
+
+
 
         private void UpdateCarrierMaterialOverview()
         {
@@ -250,24 +280,27 @@ namespace EliteDangerousStationManager
 
             foreach (var item in journalProcessor.FleetCarrierCargoItems)
             {
-                // Find if this material appears in CurrentProjectMaterials (so we can compute “StillNeeded”)
                 var match = CurrentProjectMaterials
-                    .FirstOrDefault(m => string.Equals(m.Material, item.Name, StringComparison.OrdinalIgnoreCase));
+                    .FirstOrDefault(m => Normalize(m.Material) == Normalize(item.Name));
+
 
                 int stillNeeded = 0;
+
+
                 if (match != null)
                 {
-                    int remaining = match.Required - match.Provided;
-                    // Subtract how much is already on the carrier:
-                    stillNeeded = Math.Max(remaining - item.Quantity, 0);
+
+                    stillNeeded = match.Needed - item.Quantity;
                 }
+
 
                 CarrierMaterialOverview.Add(new CarrierMaterialStatus
                 {
-                    Name = item.Name,
+                    Name = match?.Material ?? item.Name,
                     Transferred = item.Quantity,
                     StillNeeded = stillNeeded
                 });
+
             }
 
             OnPropertyChanged(nameof(CarrierMaterialOverview));
@@ -294,7 +327,7 @@ namespace EliteDangerousStationManager
             try { archiveWindow?.Close(); } catch { }
         }
 
-        private void ReadCommanderNameFromJournal()
+        private string ReadCommanderNameFromJournal()
         {
             string journalDir = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -303,126 +336,225 @@ namespace EliteDangerousStationManager
                 "Elite Dangerous"
             );
 
-            var latestFile = Directory
+            var recentFiles = Directory
                 .GetFiles(journalDir, "Journal.*.log")
                 .OrderByDescending(File.GetLastWriteTimeUtc)
-                .FirstOrDefault();
-            if (latestFile == null)
-            {
-                Logger.Log("No journal file found.", "Warning");
-                return;
-            }
+                .Take(5)
+                .ToList();
 
-            const int maxRetries = 5;
-            const int retryDelayMs = 250;
-            int attempt = 0;
-            bool success = false;
+            var commanderMap = new Dictionary<string, string>(); // FilePath -> CommanderName
 
-            while (attempt < maxRetries && !success)
+            foreach (var file in recentFiles)
             {
                 try
                 {
-                    // Open with ReadWrite+Delete sharing so Elite can keep writing/rolling it
-                    using var fs = new FileStream(
-                        latestFile,
-                        FileMode.Open,
-                        FileAccess.Read,
-                        FileShare.ReadWrite | FileShare.Delete
-                    );
+                    using var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                     using var sr = new StreamReader(fs);
-
-                    // Read entire file (reverse the lines so we find "Commander" near the end first)
                     string allText = sr.ReadToEnd();
-                    var lines = allText
-                        .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                        .Reverse();
 
+                    var lines = allText.Split('\n', StringSplitOptions.RemoveEmptyEntries).Reverse();
                     foreach (var line in lines)
                     {
                         var json = JObject.Parse(line);
                         if (json["event"]?.ToString() == "Commander")
                         {
-                            CommanderName = json["Name"]?.ToString();
-                            Dispatcher.Invoke(() =>
-                                CommanderNameTextBlock.Text = $"Commander: {CommanderName}"
-                            );
-                            Logger.Log($"Commander detected: {CommanderName}", "Success");
-                            success = true;
-                            break;
+                            string name = json["Name"]?.ToString();
+                            if (!string.IsNullOrWhiteSpace(name) && !commanderMap.ContainsValue(name))
+                            {
+                                commanderMap[file] = name;
+                                break;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    continue;
+                }
+            }
+
+            if (commanderMap.Count == 0)
+            {
+                Logger.Log("No commander name found in recent journal files.", "Warning");
+                return null;
+            }
+
+            var uniqueCommanders = commanderMap.Values.Distinct().ToList();
+            if (uniqueCommanders.Count == 1)
+            {
+                CommanderName = uniqueCommanders[0];
+                Dispatcher.Invoke(() =>
+                    CommanderNameTextBlock.Text = $"Commander: {CommanderName}"
+                );
+                Logger.Log($"Commander selected: {CommanderName}", "Success");
+                return commanderMap.First().Key;
+            }
+            else
+            {
+                string selectedFile = null;
+
+                Application.Current.Dispatcher.Invoke(() =>
+                {
+                    var window = new SelectCommanderWindow(uniqueCommanders);
+                    if (window.ShowDialog() == true)
+                    {
+                        CommanderName = window.SelectedCommander;
+                        selectedFile = commanderMap.FirstOrDefault(kvp => kvp.Value == CommanderName).Key;
+                        CommanderNameTextBlock.Text = $"Commander: {CommanderName}";
+                        Logger.Log($"Commander selected: {CommanderName}", "Success");
+                    }
+                });
+
+                return selectedFile;
+            }
+
+        }
+
+        public async Task LoadProjects(string filter = "", int filterMode = 0)
+        {
+            try
+            {
+                var projects = await Task.Run(() =>
+                {
+                    var allProjects = new List<Project>();
+
+                    // ✅ Load from Local SQLite
+                    string localDbPath = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                        "EDStationManager",
+                        "stations.db"
+                    );
+
+                    using (var localConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={localDbPath}"))
+                    {
+                        localConn.Open();
+
+                        var ensure = localConn.CreateCommand();
+                        ensure.CommandText = @"
+                    CREATE TABLE IF NOT EXISTS Projects (
+                        MarketID INTEGER PRIMARY KEY,
+                        SystemName TEXT,
+                        StationName TEXT,
+                        CreatedBy TEXT,
+                        CreatedAt DATETIME
+                    );
+                    CREATE TABLE IF NOT EXISTS ProjectResources (
+                        ResourceID INTEGER PRIMARY KEY AUTOINCREMENT,
+                        MarketID INTEGER,
+                        ResourceName TEXT,
+                        RequiredAmount INTEGER,
+                        ProvidedAmount INTEGER,
+                        Payment INTEGER
+                    );
+                    CREATE TABLE IF NOT EXISTS ProjectsArchive (
+                        MarketID INTEGER,
+                        SystemName TEXT,
+                        StationName TEXT,
+                        CreatedBy TEXT,
+                        CreatedAt DATETIME,
+                        ArchivedAt DATETIME
+                    );
+                ";
+                        ensure.ExecuteNonQuery();
+
+                        var cmd = localConn.CreateCommand();
+                        cmd.CommandText = "SELECT MarketID, SystemName, StationName, CreatedBy, CreatedAt FROM Projects";
+                        using (var reader = cmd.ExecuteReader())
+                        {
+                            while (reader.Read())
+                            {
+                                allProjects.Add(new Project
+                                {
+                                    MarketId = reader.GetInt64(0),
+                                    SystemName = reader.GetString(1),
+                                    StationName = reader.GetString(2),
+                                    CreatedBy = reader.IsDBNull(3) ? "Unknown" : reader.GetString(3),
+                                    CreatedAt = reader.IsDBNull(4) ? DateTime.MinValue : reader.GetDateTime(4),
+                                    Source = "Local"
+                                });
+                            }
                         }
                     }
 
-                    if (!success)
-                        Logger.Log("Commander name not found in journal.", "Warning");
+                    // ✅ Only load from Server DB if in Server mode
+                    if (App.CurrentDbMode == "Server")
+                    {
+                        try
+                        {
+                            var serverDb = new ProjectDatabaseService("Server");
+                            var serverProjects = serverDb.LoadProjects();
 
-                    return;
-                }
-                catch (IOException)
-                {
-                    // File is locked—wait a bit and retry
-                    attempt++;
-                    if (attempt < maxRetries)
-                        Thread.Sleep(retryDelayMs);
-                }
-            }
+                            foreach (var proj in serverProjects)
+                                proj.Source = "Server";
 
-            // After 5 failed attempts, log exactly once:
-            if (!success)
-            {
-                Logger.Log(
-                    "Error reading commander name from journal: file remained locked after multiple attempts.",
-                    "Error"
-                );
-            }
-        }
+                            allProjects.AddRange(serverProjects);
+                            Logger.Log("✅ Server DB projects loaded.", "Info");
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Log($"⚠ Could not connect to Server DB: {ex.Message}", "Warning");
+                        }
+                    }
 
-        private void LoadProjects(string filter = "", int filterMode = 0)
-        {
-            if (projectDb == null) return;
+                    return allProjects;
+                });
 
-            try
-            {
-                var loaded = projectDb.LoadProjects();
-
-                if (!string.IsNullOrWhiteSpace(filter))
-                {
-                    string keyword = filter.ToLower();
-                    loaded = loaded.Where(p =>
-                        (filterMode == 0 && p.StationName.ToLower().Contains(keyword)) ||
-                        (filterMode == 1 && (p.CreatedBy?.ToLower().Contains(keyword) ?? false))
-                    ).ToList();
-                }
-
+                // ✅ Update UI
                 Projects.Clear();
-                foreach (var p in loaded)
+                foreach (var p in projects
+                    .OrderBy(p => p.Source == "Server")
+                    .ThenBy(p => p.SystemName))
+                {
                     Projects.Add(p);
+                }
+
+                // ✅ Clearer final log
+                if (App.CurrentDbMode == "Server")
+                    Logger.Log($"✅ Loaded {projects.Count} projects (Local + Server).", "Info");
+                else
+                    Logger.Log($"✅ Loaded {projects.Count} projects (Local only).", "Info");
             }
             catch (Exception ex)
             {
-                Logger.Log($"Failed to load projects: {ex.Message}", "Warning");
+                Logger.Log($"❌ Failed to load projects: {ex.Message}", "Error");
                 Projects.Clear();
             }
         }
 
         private void StartTimer()
         {
+
             timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
             timer.Tick += (s, e) =>
             {
-                Logger.Log("Timer tick", "Info");
+                Logger.Log("⏱ Timer tick", "Debug");
 
                 Task.Run(() =>
                 {
                     try
                     {
                         journalProcessor.ScanForDepotEvents();
+
+                        Dispatcher.Invoke(() =>
+                        {
+                            try
+                            {
+                                ScanForDepotAndRefreshUI();
+                                UpdateCarrierMaterialOverview();
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Log($"⚠ UI refresh failed: {ex.Message}", "Warning");
+                            }
+                        });
                     }
                     catch (Exception ex)
                     {
-                        Logger.Log($"Journal scan failed: {ex.Message}", "Warning");
+                        Logger.Log($"❌ Background task failed: {ex.Message}", "Error");
                     }
-                    Dispatcher.Invoke(() => ScanForDepotAndRefreshUI());
                 });
+
+
                 LastUpdate = DateTime.Now.ToString("HH:mm:ss");
             };
 
@@ -430,157 +562,270 @@ namespace EliteDangerousStationManager
             timer.Start();
         }
 
-        private void ScanForDepotAndRefreshUI()
+
+        private bool overlayVisible = true; // controlled by your Hide/Show button
+
+        private void ShowOverlayIfAllowed()
         {
-            if (projectDb != null)
+            if (!overlayVisible) return;
+            overlayManager.ShowOverlay(CurrentProjectMaterials);
+        }
+
+
+        private void ToggleOverlayButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (overlayVisible)
             {
-                try
-                {
-                    var selectedIds = SelectedProjects.Select(p => p.MarketId).ToHashSet();
-
-                    if (string.IsNullOrWhiteSpace(SearchBox.Text))
-                    {
-                        LoadProjects();
-                    }
-                    else
-                    {
-                        string keyword = SearchBox.Text.ToLower();
-                        int mode = SearchMode.SelectedIndex;
-
-                        var filtered = projectDb.LoadProjects().Where(p =>
-                            (mode == 0 && p.StationName.ToLower().Contains(keyword)) ||
-                            (mode == 1 && (p.CreatedBy?.ToLower().Contains(keyword) ?? false)) ||
-                            (mode == 2 && (CommanderName?.ToLower().Contains(keyword) ?? false))
-                        );
-
-                        Projects.Clear();
-                        foreach (var p in filtered)
-                            Projects.Add(p);
-                    }
-
-                    SelectedProjects.Clear();
-                    foreach (var p in Projects.Where(x => selectedIds.Contains(x.MarketId)))
-                        SelectedProjects.Add(p);
-                }
-                catch (Exception ex)
-                {
-                    Logger.Log($"Error reloading projects: {ex.Message}", "Warning");
-                }
-            }
-
-            if (SelectedProjects.Count == 1)
-            {
-                LoadMaterialsForProject(SelectedProjects.First());
-                overlayManager.ShowOverlay(CurrentProjectMaterials);
-            }
-            else if (SelectedProjects.Count > 1)
-            {
-                LoadMaterialsForProjects(SelectedProjects);
-                overlayManager.ShowOverlay(CurrentProjectMaterials);
+                overlayVisible = false;
+                overlayManager.CloseOverlay();
+                ToggleOverlayButton.Content = "Show Overlay";
+                Logger.Log("Overlay hidden.", "Info");
             }
             else
             {
-                CurrentProjectMaterials.Clear();
+                overlayVisible = true;
+                // re-show only if you have materials selected
+                if (SelectedProjects.Count == 1)
+                {
+                    LoadMaterialsForProject(SelectedProjects.First());
+                }
+                else if (SelectedProjects.Count > 1)
+                {
+                    LoadMaterialsForProjects(SelectedProjects);
+                }
+                ShowOverlayIfAllowed();
+                ToggleOverlayButton.Content = "Hide Overlay";
+                Logger.Log("Overlay shown.", "Info");
+            }
+        }
+
+
+
+        private async Task ScanForDepotAndRefreshUI()
+        {
+            try
+            {
+                // ✅ Reload both Local + Server projects
+                await LoadProjects();                // Wait here because it's async
+
+                // ✅ Preserve selected project IDs
+                var selectedIds = SelectedProjects.Select(p => p.MarketId).ToHashSet();
+
+                // ✅ Reapply Search filter if there's any text in SearchBox
+                if (!string.IsNullOrWhiteSpace(SearchBox.Text))
+                {
+                    string keyword = SearchBox.Text.ToLower();
+                    int mode = SearchMode.SelectedIndex;
+
+                    // Filter the in-memory Projects list (keeps filtered display)
+                    var filtered = Projects
+                        .Where(p =>
+                            (mode == 0 && p.StationName.ToLower().Contains(keyword)) ||
+                            (mode == 1 && (p.CreatedBy?.ToLower().Contains(keyword) ?? false)) ||
+                            (mode == 2 && p.SystemName.ToLower().Contains(keyword))
+                        )
+                        .OrderBy(p => p.Source == "Server") // Local first
+                        .ThenBy(p => p.SystemName)
+                        .ToList();
+
+                    Projects.Clear();
+                    foreach (var p in filtered)
+                        Projects.Add(p);
+                }
+
+                // ✅ Restore selected projects
+                SelectedProjects.Clear();
+                foreach (var p in Projects.Where(x => selectedIds.Contains(x.MarketId)))
+                    SelectedProjects.Add(p);
+
+                RefreshMaterialsAndMaybeShowOverlay();
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Error reloading projects: {ex.Message}", "Warning");
             }
         }
 
         private void LoadMaterialsForProjects(IEnumerable<Project> projects)
         {
-            if (projectDb == null) return;
+            if (projects == null || !projects.Any()) return;
 
             var combined = new Dictionary<string, ProjectMaterial>();
-            try
+
+            foreach (var project in projects)
             {
-                using var conn = new MySqlConnection(projectDb.ConnectionString);
-                conn.Open();
-
-                foreach (var project in projects)
+                try
                 {
-                    using var cmd = new MySqlCommand(@"
-                        SELECT ResourceName, RequiredAmount, ProvidedAmount
-                        FROM ProjectResources
-                        WHERE MarketID = @mid
-                          AND RequiredAmount > ProvidedAmount
-                        ORDER BY ResourceName;",
-                        conn
-                    );
-                    cmd.Parameters.AddWithValue("@mid", project.MarketId);
-
-                    using var reader = cmd.ExecuteReader();
-                    while (reader.Read())
+                    if (project.Source == "Local")
                     {
-                        string name = reader.GetString("ResourceName");
-                        int required = reader.GetInt32("RequiredAmount");
-                        int provided = reader.GetInt32("ProvidedAmount");
-                        int needed = required - provided;
+                        // ✅ SQLite for Local
+                        using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=stations.db");
+                        conn.Open();
 
-                        if (!combined.TryGetValue(name, out var existing))
+                        var cmd = conn.CreateCommand();
+                        cmd.CommandText = @"
+                    SELECT Material, RequiredAmount, ProvidedAmount
+                    FROM ProjectResources
+                    WHERE MarketID = @mid
+                      AND RequiredAmount > ProvidedAmount
+                    ORDER BY Material;";
+                        cmd.Parameters.AddWithValue("@mid", project.MarketId);
+
+                        using var reader = cmd.ExecuteReader();
+                        while (reader.Read())
                         {
-                            combined[name] = new ProjectMaterial
+                            string name = reader.GetString(0);
+                            int required = reader.GetInt32(1);
+                            int provided = reader.GetInt32(2);
+                            int needed = required - provided;
+
+                            if (!combined.TryGetValue(name, out var existing))
                             {
-                                Material = name,
-                                Required = required,
-                                Provided = provided,
-                                Needed = needed
-                            };
+                                combined[name] = new ProjectMaterial
+                                {
+                                    Material = name,
+                                    Required = required,
+                                    Provided = provided,
+                                    Needed = needed
+                                };
+                            }
+                            else
+                            {
+                                existing.Required += required;
+                                existing.Provided += provided;
+                                existing.Needed = Math.Max(existing.Required - existing.Provided, 0);
+                            }
                         }
-                        else
+                    }
+                    else
+                    {
+                        // ✅ MySQL for Server
+                        string serverConnStr = ConfigurationManager.ConnectionStrings["PrimaryDB"]?.ConnectionString;
+                        if (string.IsNullOrWhiteSpace(serverConnStr)) continue;
+
+                        using var conn = new MySql.Data.MySqlClient.MySqlConnection(serverConnStr);
+                        conn.Open();
+
+                        var cmd = new MySql.Data.MySqlClient.MySqlCommand(@"
+                    SELECT ResourceName, RequiredAmount, ProvidedAmount
+                    FROM ProjectResources
+                    WHERE MarketID = @mid
+                      AND RequiredAmount > ProvidedAmount
+                    ORDER BY ResourceName;", conn);
+                        cmd.Parameters.AddWithValue("@mid", project.MarketId);
+
+                        using var reader = cmd.ExecuteReader();
+                        while (reader.Read())
                         {
-                            existing.Required += required;
-                            existing.Provided += provided;
-                            existing.Needed = Math.Max(existing.Required - existing.Provided, 0);
+                            string name = reader.GetString("ResourceName");
+                            int required = reader.GetInt32("RequiredAmount");
+                            int provided = reader.GetInt32("ProvidedAmount");
+                            int needed = required - provided;
+
+                            if (!combined.TryGetValue(name, out var existing))
+                            {
+                                combined[name] = new ProjectMaterial
+                                {
+                                    Material = name,
+                                    Required = required,
+                                    Provided = provided,
+                                    Needed = needed
+                                };
+                            }
+                            else
+                            {
+                                existing.Required += required;
+                                existing.Provided += provided;
+                                existing.Needed = Math.Max(existing.Required - existing.Provided, 0);
+                            }
                         }
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                Logger.Log($"Error loading combined materials: {ex.Message}", "Warning");
-                combined.Clear();
+                catch (Exception ex)
+                {
+                    Logger.Log($"Error loading materials for {project.StationName}: {ex.Message}", "Warning");
+                }
             }
 
+            // ✅ Update UI with merged materials
             CurrentProjectMaterials.Clear();
             foreach (var mat in combined.Values.Where(m => m.Needed > 0).OrderBy(m => m.Material))
                 CurrentProjectMaterials.Add(mat);
 
             Logger.Log($"Loaded {CurrentProjectMaterials.Count} combined materials.", "Info");
+            UpdateCarrierMaterialOverview();
         }
 
         private void LoadMaterialsForProject(Project project)
         {
             CurrentProjectMaterials.Clear();
-            if (project == null || projectDb == null)
-                return;
+            if (project == null) return;
 
             try
             {
-                using var conn = new MySqlConnection(projectDb.ConnectionString);
-                conn.Open();
-
-                var cmd = new MySqlCommand(@"
-                    SELECT ResourceName, RequiredAmount, ProvidedAmount
-                    FROM ProjectResources
-                    WHERE MARKETID = @mid
-                      AND RequiredAmount > ProvidedAmount
-                    ORDER BY ResourceName;",
-                    conn
-                );
-                cmd.Parameters.AddWithValue("@mid", project.MarketId);
-
-                using var reader = cmd.ExecuteReader();
-                while (reader.Read())
+                if (project.Source == "Local")
                 {
-                    int required = reader.GetInt32("RequiredAmount");
-                    int provided = reader.GetInt32("ProvidedAmount");
-                    int needed = required - provided;
+                    // ✅ SQLite for Local
+                    using var conn = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=stations.db");
+                    conn.Open();
 
-                    CurrentProjectMaterials.Add(new ProjectMaterial
+                    var cmd = conn.CreateCommand();
+                    cmd.CommandText = @"
+                SELECT Material, RequiredAmount, ProvidedAmount
+                FROM ProjectResources
+                WHERE MarketID = @mid
+                  AND RequiredAmount > ProvidedAmount
+                ORDER BY Material;";
+                    cmd.Parameters.AddWithValue("@mid", project.MarketId);
+
+                    using var reader = cmd.ExecuteReader();
+                    while (reader.Read())
                     {
-                        Material = reader.GetString("ResourceName"),
-                        Required = required,
-                        Provided = provided,
-                        Needed = needed
-                    });
+                        int required = reader.GetInt32(1);
+                        int provided = reader.GetInt32(2);
+                        int needed = required - provided;
+
+                        CurrentProjectMaterials.Add(new ProjectMaterial
+                        {
+                            Material = reader.GetString(0),
+                            Required = required,
+                            Provided = provided,
+                            Needed = needed
+                        });
+                    }
+                }
+                else
+                {
+                    // ✅ MySQL for Server
+                    string serverConnStr = ConfigurationManager.ConnectionStrings["PrimaryDB"]?.ConnectionString;
+                    if (string.IsNullOrWhiteSpace(serverConnStr)) return;
+
+                    using var conn = new MySql.Data.MySqlClient.MySqlConnection(serverConnStr);
+                    conn.Open();
+
+                    var cmd = new MySql.Data.MySqlClient.MySqlCommand(@"
+                SELECT ResourceName, RequiredAmount, ProvidedAmount
+                FROM ProjectResources
+                WHERE MARKETID = @mid
+                  AND RequiredAmount > ProvidedAmount
+                ORDER BY ResourceName;", conn);
+                    cmd.Parameters.AddWithValue("@mid", project.MarketId);
+
+                    using var reader = cmd.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        int required = reader.GetInt32("RequiredAmount");
+                        int provided = reader.GetInt32("ProvidedAmount");
+                        int needed = required - provided;
+
+                        CurrentProjectMaterials.Add(new ProjectMaterial
+                        {
+                            Material = reader.GetString("ResourceName"),
+                            Required = required,
+                            Provided = provided,
+                            Needed = needed
+                        });
+                    }
                 }
 
                 Logger.Log($"Loaded {CurrentProjectMaterials.Count} materials for {project}", "Info");
@@ -589,65 +834,66 @@ namespace EliteDangerousStationManager
             {
                 Logger.Log("Error loading materials: " + ex.Message, "Warning");
             }
+
+            UpdateCarrierMaterialOverview();
         }
 
         private void SelectProjectButton_Click(object sender, RoutedEventArgs e)
         {
             if (sender is Button button && button.DataContext is Project project)
             {
-                if (Keyboard.Modifiers == ModifierKeys.Shift)
-                {
-                    if (SelectedProjects.Contains(project))
-                        SelectedProjects.Remove(project);
-                    else
-                        SelectedProjects.Add(project);
-                }
+                // ✅ Toggle the project in the ListBox selection
+                if (ProjectsListBox.SelectedItems.Contains(project))
+                    ProjectsListBox.SelectedItems.Remove(project);
                 else
-                {
-                    SelectedProjects.Clear();
-                    SelectedProjects.Add(project);
-                }
+                    ProjectsListBox.SelectedItems.Add(project);
 
-                if (SelectedProjects.Count > 0)
-                {
-                    if (SelectedProjects.Count == 1)
-                    {
-                        LoadMaterialsForProject(SelectedProjects.First());
-                        overlayManager.ShowOverlay(CurrentProjectMaterials);
-                    }
-                    else
-                    {
-                        LoadMaterialsForProjects(SelectedProjects);
-                        overlayManager.ShowOverlay(CurrentProjectMaterials);
-                    }
-                }
-                else
-                {
-                    CurrentProjectMaterials.Clear();
-                }
+                // ✅ Mirror ListBox.SelectedItems into SelectedProjects
+                SelectedProjects.Clear();
+                foreach (Project selected in ProjectsListBox.SelectedItems)
+                    SelectedProjects.Add(selected);
+
+                RefreshMaterialsAndMaybeShowOverlay();
 
                 OnPropertyChanged(nameof(SelectedProjects));
             }
         }
 
-        private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
+        private async void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
         {
-            if (projectDb == null) return;
-
             string keyword = SearchBox.Text.ToLower();
             int mode = SearchMode.SelectedIndex;
 
             try
             {
-                var filtered = projectDb.LoadProjects().Where(p =>
-                    (mode == 0 && p.StationName.ToLower().Contains(keyword)) ||
-                    (mode == 1 && (p.CreatedBy?.ToLower().Contains(keyword) ?? false)) ||
-                    (mode == 2 && (CommanderName?.ToLower().Contains(keyword) ?? false))
-                );
+                // ✅ Run filtering in a background Task to avoid blocking UI
+                var filteredProjects = await Task.Run(() =>
+                {
+                    string commander = CommanderName?.ToLower() ?? "unknown";
+                    string keywordSafe = string.IsNullOrWhiteSpace(keyword) ? commander : keyword.ToLower().Trim();
 
-                Projects.Clear();
-                foreach (var proj in filtered)
-                    Projects.Add(proj);
+                    IEnumerable<Project> results = Projects;
+
+                    results = results.Where(p =>
+                        (mode == 0 && p.StationName.ToLower().Contains(keywordSafe)) ||
+                        (mode == 1 && (p.CreatedBy?.ToLower().Contains(keywordSafe) ?? false)) ||
+                        (mode == 2 && p.SystemName.ToLower().Contains(keywordSafe))
+                    );
+
+                    return results
+                        .OrderBy(p => p.Source == "Server")
+                        .ThenBy(p => p.SystemName)
+                        .ToList();
+                });
+
+                // ✅ UI thread: Update the collection in one go
+                Dispatcher.Invoke(() =>
+                {
+                    Projects.Clear();
+                    foreach (var p in filteredProjects)
+                        Projects.Add(p);
+                });
+
             }
             catch (Exception ex)
             {
@@ -679,13 +925,13 @@ namespace EliteDangerousStationManager
                             {
                                 LoadProjects();
                                 LoadMaterialsForProject(SelectedProjects.First());
-                                overlayManager.ShowOverlay(CurrentProjectMaterials);
+                                ShowOverlayIfAllowed();
                             }
                             else if (SelectedProjects.Count > 1)
                             {
                                 LoadProjects();
                                 LoadMaterialsForProjects(SelectedProjects);
-                                overlayManager.ShowOverlay(CurrentProjectMaterials);
+                                ShowOverlayIfAllowed();
                             }
                             else
                             {
@@ -706,7 +952,7 @@ namespace EliteDangerousStationManager
 
         private void OwnerProjectButton_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is Button btn && btn.DataContext is Project proj && projectDb != null)
+            if (sender is Button btn && btn.DataContext is Project proj)
             {
                 var result = MessageBox.Show(
                     $"Are you sure you want to delete the project \"{proj.StationName}\"?\nThis cannot be undone.",
@@ -718,41 +964,214 @@ namespace EliteDangerousStationManager
                 {
                     try
                     {
-                        projectDb.DeleteProject(proj.MarketId);
+                        if (proj.Source == "Local")
+                        {
+                            // ✅ Delete from SQLite
+                            string localDbPath = Path.Combine(
+                                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                                "EDStationManager",
+                                "stations.db"
+                            );
+
+                            using var localConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={localDbPath}");
+                            localConn.Open();
+
+                            using (var deleteResources = localConn.CreateCommand())
+                            {
+                                deleteResources.CommandText = "DELETE FROM ProjectResources WHERE MarketID = @mid;";
+                                deleteResources.Parameters.AddWithValue("@mid", proj.MarketId);
+                                deleteResources.ExecuteNonQuery();
+                            }
+
+                            using (var deleteProject = localConn.CreateCommand())
+                            {
+                                deleteProject.CommandText = "DELETE FROM Projects WHERE MarketID = @mid;";
+                                deleteProject.Parameters.AddWithValue("@mid", proj.MarketId);
+                                deleteProject.ExecuteNonQuery();
+                            }
+
+                            Logger.Log($"🗑️ Deleted LOCAL project: {proj.StationName} ({proj.MarketId})", "Success");
+                        }
+                        else if (proj.Source == "Server")
+                        {
+                            // ✅ Delete from MySQL
+                            using var serverConn = new MySql.Data.MySqlClient.MySqlConnection(projectDb.ConnectionString);
+                            serverConn.Open();
+
+                            using (var deleteResources = serverConn.CreateCommand())
+                            {
+                                deleteResources.CommandText = "DELETE FROM ProjectResources WHERE MarketID = @mid;";
+                                deleteResources.Parameters.AddWithValue("@mid", proj.MarketId);
+                                deleteResources.ExecuteNonQuery();
+                            }
+
+                            using (var deleteProject = serverConn.CreateCommand())
+                            {
+                                deleteProject.CommandText = "DELETE FROM Projects WHERE MarketID = @mid;";
+                                deleteProject.Parameters.AddWithValue("@mid", proj.MarketId);
+                                deleteProject.ExecuteNonQuery();
+                            }
+
+                            Logger.Log($"🗑️ Deleted SERVER project: {proj.StationName} ({proj.MarketId})", "Success");
+                        }
+
+                        // ✅ Remove from UI
                         Projects.Remove(proj);
-                        Logger.Log($"Project deleted: {proj.StationName} ({proj.MarketId})", "Success");
                     }
                     catch (Exception ex)
                     {
-                        Logger.Log($"Error deleting project: {ex.Message}", "Warning");
-                        MessageBox.Show("Failed to delete the project.\n" + ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                        Logger.Log($"❌ Error deleting project: {ex.Message}", "Error");
+                        MessageBox.Show("Failed to delete the project.\n" + ex.Message,
+                            "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                     }
                 }
             }
         }
 
-        private void RefreshCargoButton_Click(object sender, RoutedEventArgs e)
+
+        private async void SyncProjectButton_Click(object sender, RoutedEventArgs e)
         {
-            // Fleet‐carrier cargo tracking was removed—no action needed
-            Logger.Log("Manual cargo refresh cleared (cargo tracking disabled).", "Info");
+            if (sender is Button btn && btn.DataContext is Project project)
+            {
+                Logger.Log($"[SYNC] Starting sync for project: {project.StationName} (MarketID {project.MarketId})", "Info");
+
+                // 🚨 Skip if already from the server
+                if (project.Source == "Server")
+                {
+                    MessageBox.Show($"'{project.StationName}' is already on the server.", "Sync Skipped",
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                // 🔴 Disable the button during sync
+                btn.IsEnabled = false;
+
+                await Task.Run(async () =>
+                {
+                    try
+                    {
+                        // ✅ Use the DB already chosen by ProjectDatabaseService
+                        using var serverConn = new MySql.Data.MySqlClient.MySqlConnection(projectDb.ConnectionString);
+                        await serverConn.OpenAsync();
+
+                        // ✅ Open Local SQLite
+                        string localDbPath = Path.Combine(
+                            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                            "EDStationManager",
+                            "stations.db"
+                        );
+                        using var localConn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={localDbPath}");
+                        await localConn.OpenAsync();
+
+                        // ✅ Read project from local DB
+                        using (var getProject = localConn.CreateCommand())
+                        {
+                            getProject.CommandText = "SELECT MarketID, SystemName, StationName, CreatedBy, CreatedAt FROM Projects WHERE MarketID=@mid";
+                            getProject.Parameters.AddWithValue("@mid", project.MarketId);
+
+                            using var reader = await getProject.ExecuteReaderAsync();
+                            if (await reader.ReadAsync())
+                            {
+                                var upsertProj = new MySql.Data.MySqlClient.MySqlCommand(@"
+                            INSERT INTO Projects (MarketID, SystemName, StationName, CreatedBy, CreatedAt)
+                            VALUES (@mid, @sys, @st, @cb, @ca)
+                            ON DUPLICATE KEY UPDATE 
+                                SystemName=@sys,
+                                StationName=@st,
+                                CreatedBy=@cb,
+                                CreatedAt=@ca;", serverConn);
+
+                                upsertProj.Parameters.AddWithValue("@mid", reader.GetInt64(0));
+                                upsertProj.Parameters.AddWithValue("@sys", reader.GetString(1));
+                                upsertProj.Parameters.AddWithValue("@st", reader.GetString(2));
+                                upsertProj.Parameters.AddWithValue("@cb", reader.GetString(3));
+
+                                // ✅ Handle NULL CreatedAt safely
+                                DateTime createdAt = reader.IsDBNull(4) ? DateTime.UtcNow : reader.GetDateTime(4);
+                                upsertProj.Parameters.AddWithValue("@ca", createdAt);
+
+                                await upsertProj.ExecuteNonQueryAsync();
+                            }
+                        }
+
+                        // ✅ Read and transfer resources
+                        using (var getResources = localConn.CreateCommand())
+                        {
+                            // 🔄 FIX: Use ResourceName instead of Material
+                            getResources.CommandText = "SELECT ResourceName, RequiredAmount, ProvidedAmount, Payment FROM ProjectResources WHERE MarketID=@mid";
+                            getResources.Parameters.AddWithValue("@mid", project.MarketId);
+
+                            using var resReader = await getResources.ExecuteReaderAsync();
+                            while (await resReader.ReadAsync())
+                            {
+                                var upsertRes = new MySql.Data.MySqlClient.MySqlCommand(@"
+                            INSERT INTO ProjectResources (MarketID, ResourceName, RequiredAmount, ProvidedAmount, Payment)
+                            VALUES (@mid, @mat, @req, @prov, @pay)
+                            ON DUPLICATE KEY UPDATE 
+                                RequiredAmount=@req,
+                                ProvidedAmount=@prov,
+                                Payment=@pay;", serverConn);
+
+                                upsertRes.Parameters.AddWithValue("@mid", project.MarketId);
+                                upsertRes.Parameters.AddWithValue("@mat", resReader.GetString(0));
+                                upsertRes.Parameters.AddWithValue("@req", resReader.GetInt32(1));
+                                upsertRes.Parameters.AddWithValue("@prov", resReader.GetInt32(2));
+
+                                // ✅ Handle NULL payments safely
+                                int payment = resReader.IsDBNull(3) ? 0 : resReader.GetInt32(3);
+                                upsertRes.Parameters.AddWithValue("@pay", payment);
+
+                                await upsertRes.ExecuteNonQueryAsync();
+                            }
+                        }
+
+                        // ✅ Remove from local DB (cleanup after successful sync)
+                        using (var deleteRes = localConn.CreateCommand())
+                        {
+                            deleteRes.CommandText = "DELETE FROM ProjectResources WHERE MarketID=@mid";
+                            deleteRes.Parameters.AddWithValue("@mid", project.MarketId);
+                            await deleteRes.ExecuteNonQueryAsync();
+                        }
+
+                        using (var deleteProject = localConn.CreateCommand())
+                        {
+                            deleteProject.CommandText = "DELETE FROM Projects WHERE MarketID=@mid";
+                            deleteProject.Parameters.AddWithValue("@mid", project.MarketId);
+                            await deleteProject.ExecuteNonQueryAsync();
+                        }
+
+                        // ✅ Update UI
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            Logger.Log($"✅ Project '{project.StationName}' synced successfully and removed from local DB.", "Success");
+                            MessageBox.Show($"Project '{project.StationName}' synced to server and removed from local DB!",
+                                "Sync Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+
+                            LoadProjects(); // Refresh list
+                            btn.IsEnabled = true; // re-enable button
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            Logger.Log($"❌ Sync failed for {project.StationName}: {ex.Message}", "Error");
+                            MessageBox.Show($"Sync failed:\n{ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                            btn.IsEnabled = true; // re-enable button even if failed
+                        });
+                    }
+                });
+            }
         }
 
-        private void Button_Click(object sender, RoutedEventArgs e)
+        private void RefreshCargoButton_Click(object sender, RoutedEventArgs e)
         {
-            Logger.Log("Manual refresh triggered.", "Info");
-            Task.Run(() =>
-            {
-                try
-                {
-                    journalProcessor.ScanForDepotEvents();
-                }
-                catch (Exception ex)
-                {
-                    Logger.Log($"Journal scan failed: {ex.Message}", "Warning");
-                }
-                Dispatcher.Invoke(() => ScanForDepotAndRefreshUI());
-            });
-            LastUpdate = DateTime.Now.ToString("HH:mm:ss");
+            // Clear internal cargo state in journalProcessor
+            journalProcessor.ClearFleetCarrierCargo();
+
+            FleetCarrierCargoItems.Clear();
+            CarrierMaterialOverview.Clear();
+            Logger.Log("Fleet Carrier cargo and material overview cleared.", "Info");
         }
 
         private void OpenArchive_Click(object sender, RoutedEventArgs e)
@@ -807,6 +1226,25 @@ namespace EliteDangerousStationManager
                 plannerWindow.Show();
             }
         }
+        private void RefreshMaterialsAndMaybeShowOverlay()
+        {
+            if (SelectedProjects.Count == 1)
+            {
+                LoadMaterialsForProject(SelectedProjects.First());
+            }
+            else if (SelectedProjects.Count > 1)
+            {
+                LoadMaterialsForProjects(SelectedProjects);
+            }
+            else
+            {
+                CurrentProjectMaterials.Clear();
+                return;
+            }
+
+            ShowOverlayIfAllowed();
+        }
+
 
         public event PropertyChangedEventHandler PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string name = null) =>

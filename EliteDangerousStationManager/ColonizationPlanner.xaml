@@ -9,15 +9,21 @@
     <!-- Enable shared sizing across header and rows -->
     <DockPanel Grid.IsSharedSizeScope="True" Margin="10">
         <!-- Add Button locked top-right -->
-        <Button Content="+ Add Structure"
-                DockPanel.Dock="Top"
-                HorizontalAlignment="Right"
-                Background="#ff8080"
-                Foreground="White"
-                FontWeight="Bold"
-                Padding="8,4"
-                Click="AddStructureRow_Click"
-                Margin="0,0,0,10"/>
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" HorizontalAlignment="Right" Margin="0,0,0,10">
+            <Button Content="+ Add Structure"
+                    Background="#ff8080"
+                    Foreground="White"
+                    FontWeight="Bold"
+                    Padding="8,4"
+                    Click="AddStructureRow_Click"
+                    Margin="0,0,10,0"/>
+            <Button Content="📊 Show All Structures"
+                    Background="#8080ff"
+                    Foreground="White"
+                    FontWeight="Bold"
+                    Padding="8,4"
+                    Click="ShowAllStructures_Click"/>
+        </StackPanel>
 
         <!-- Top Totals -->
         <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,10">
@@ -35,6 +41,8 @@
             <TextBlock x:Name="TotalWealth"    FontSize="14" Foreground="White" Margin="10,0"/>
             <TextBlock x:Name="TotalSoL"       FontSize="14" Foreground="White" Margin="10,0"/>
             <TextBlock x:Name="TotalDev"       FontSize="14" Foreground="White" Margin="10,0"/>
+            <TextBlock x:Name="TotalT2"        FontSize="14" Foreground="LightBlue" Margin="10,0"/>
+            <TextBlock x:Name="TotalT3"        FontSize="14" Foreground="LightGreen" Margin="10,0"/>
         </StackPanel>
 
         <!-- Column Headers -->

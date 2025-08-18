@@ -8,6 +8,8 @@
 
         <!-- ✅ Register your converter -->
         <converters:CreatorVisibilityConverter x:Key="CreatorVisibilityConverter" />
+        <converters:LocalOnlyVisibilityConverter  x:Key="LocalOnlyVisibilityConverter" />
+        <converters:SourceColorConverter x:Key="SourceColorConverter" />
         <converters:ProjectSelectTextConverter x:Key="ProjectSelectTextConverter" />
         <converters:ProjectSelectedToBrushConverter x:Key="ProjectSelectedToBrushConverter"/>
         <converters:ProjectGlowEffectConverter x:Key="ProjectGlowEffectConverter" />
