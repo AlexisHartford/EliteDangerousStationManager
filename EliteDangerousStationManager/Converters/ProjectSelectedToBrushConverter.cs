@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Windows.Data;
 using System.Windows.Media;
 using EliteDangerousStationManager.Models;
+using Brush = System.Windows.Media.Brush;
 
 namespace EliteDangerousStationManager.Converters
 {

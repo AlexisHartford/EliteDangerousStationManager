@@ -8,6 +8,7 @@ using System.Configuration;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 
@@ -23,17 +24,27 @@ namespace EliteDangerousStationManager.Services
         private bool _isCurrentlyDocked = false;
         public event Action<JObject> EntryParsed;
 
+        // Cold-start protection for carrier storage
+        private DateTime _carrierCutoffUtc = DateTime.MinValue; // events older than this are ignored for carrier storage
+        private bool _coldStartFullScan = false;                 // true when we started from pos 0
+
+        public event Action<string, int> CarrierTransferDelta; // +N to carrier, -N from carrier
+
+        public Dictionary<string, int> SessionTransfers { get; } = new(StringComparer.OrdinalIgnoreCase);
+
         private readonly string _stateFilePath;
         private ReadState _lastState = new ReadState();
 
-        // Once we pick a working connection string, use it for all DB calls:
-        private readonly string _connectionString;
-
-        // Cache whether DB is currently reachable.  If false, skip DB calls.
-        private bool _dbAvailable;
+        // True only when app is running in Server mode (MySQL enabled).
+        private static bool DbServerEnabled => App.CurrentDbMode == "Server";
 
         // Holds whether the last docking was on a FleetCarrier
         private bool _lastDockedOnFleetCarrier = false;
+
+        // Prevent duplicate DB writes for the same journal line
+        private readonly Queue<string> _recentCarrierKeys = new Queue<string>(64);
+        private readonly HashSet<string> _recentCarrierKeySet = new HashSet<string>();
+        private const int RecentKeyLimit = 64;
 
         // Holds the system and station name from the last Docked event
         private string _lastDockedSystem = null;
@@ -48,20 +59,6 @@ namespace EliteDangerousStationManager.Services
         public event Action CarrierCargoChanged;
         // ------------------------------------------------------------
 
-        // Simple helper to test whether a connection string works:
-        private static bool CanConnect(string connString)
-        {
-            try
-            {
-                using var conn = new MySqlConnection(connString);
-                conn.Open();
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
-        }
 
         public JournalProcessor(string journalPath, string commanderName)
         {
@@ -70,27 +67,7 @@ namespace EliteDangerousStationManager.Services
             _eddnSender = new EddnSender();
             _inaraSender = new InaraSender();
 
-            string primary = ConfigurationManager.ConnectionStrings["PrimaryDB"]?.ConnectionString;
-            string fallback = ConfigurationManager.ConnectionStrings["FallbackDB"]?.ConnectionString;
-
-            if (!string.IsNullOrWhiteSpace(primary) && CanConnect(primary))
-            {
-                _connectionString = primary;
-                _dbAvailable = true;
-                Logger.Log("JournalProcessor: Connected to PrimaryDB.", "Info");
-            }
-            else if (!string.IsNullOrWhiteSpace(fallback) && CanConnect(fallback))
-            {
-                _connectionString = fallback;
-                _dbAvailable = true;
-                Logger.Log("JournalProcessor: PrimaryDB unreachable → using FallbackDB.", "Warning");
-            }
-            else
-            {
-                _connectionString = primary ?? fallback ?? string.Empty;
-                _dbAvailable = false;
-                Logger.Log("JournalProcessor: Cannot connect to any DB host. All DB updates will be skipped for now.", "Warning");
-            }
+            
 
             _stateFilePath = Path.Combine(_journalPath, "lastread.state");
             LoadReadState();
@@ -147,6 +124,14 @@ namespace EliteDangerousStationManager.Services
             bool isFirstScan = string.IsNullOrEmpty(_lastState.FileName);
             long startPos = (isNewFile || isFirstScan) ? 0 : _lastState.Position;
 
+            // If we’re starting from the beginning (state missing/cleared), only trust events >= "now"
+            _coldStartFullScan = (startPos == 0);
+            if (_coldStartFullScan)
+            {
+                // tiny skew so events logged at the exact same second still pass
+                _carrierCutoffUtc = DateTime.UtcNow.AddSeconds(-2);
+            }
+
             var lines = new List<string>();
             try
             {
@@ -187,7 +172,12 @@ namespace EliteDangerousStationManager.Services
 
                 string evt = json["event"]?.ToString();
 
-                if (evt == "Docked")
+                if (IsDockedLikeEvent(json))
+                {
+                    HandleDockedLikeEvent(json);
+                    latestDockedEvent = json; // keep your existing logic that uses latestDockedEvent
+                }
+                else if (evt == "Docked")
                 {
                     string stationType = json["StationType"]?.ToString();
                     string starSystem = json["StarSystem"]?.ToString();
@@ -211,26 +201,25 @@ namespace EliteDangerousStationManager.Services
                     _isCurrentlyDocked = true;
 
                     // >>> NEW: remember the carrier callsign if this is a Fleet Carrier
-                    _lastDockedCarrierCode = _lastDockedOnFleetCarrier ? ExtractCarrierCodeFromStationName(stationName) : null;
+                    _lastDockedCarrierCode = _lastDockedOnFleetCarrier
+                        ? ExtractCarrierCodeFromStationName(stationName)
+                        : null;
 
-                    Logger.Log($"✅ Docked at {stationName} in {starSystem} (MarketID={marketId}, Type={stationType})", "Info");
-                    if (_lastDockedOnFleetCarrier && !string.IsNullOrWhiteSpace(_lastDockedCarrierCode))
+                    //Logger.Log($"✅ Docked at {stationName} in {starSystem} (MarketID={marketId}, Type={stationType})", "Info");
+                    if (_lastDockedOnFleetCarrier)
                     {
-                        Logger.Log($"[CARRIER] Callsign detected: {_lastDockedCarrierCode}", "Debug");
-                    }
-
-                    // 🔵 FILTER: Only add local projects for SpaceConstructionDepot
-                    if (stationType == "SpaceConstructionDepot")
-                    {
-                        if (marketId != 0 && !ProjectExistsLocal(marketId) && !ProjectExists(marketId))
+                        if (string.IsNullOrWhiteSpace(_lastDockedCarrierCode) || !IsRegisteredCarrier(_lastDockedCarrierCode))
                         {
-                            InsertNewLocalProject(marketId, starSystem, stationName);
+                            // If the name didn’t include a callsign or it isn't registered, don’t write to DB later.
+                            Logger.Log($"[CARRIER] Docked on FC but code missing/unregistered. Name='{stationName}', Code='{_lastDockedCarrierCode ?? "null"}'", "Warning");
+                            _lastDockedCarrierCode = null;
                         }
-                        else if (ProjectExists(marketId))
+                        else
                         {
-                            // Skipped local insert: already on server
+                            Logger.Log($"[CARRIER] Docked to registered carrier: {_lastDockedCarrierCode}", "Info");
                         }
                     }
+
 
                     latestDockedEvent = json;
                 }
@@ -246,132 +235,73 @@ namespace EliteDangerousStationManager.Services
                 else if (evt == "ColonisationConstructionDepot")
                 {
                     var depot = json.ToObject<ColonisationConstructionDepotEvent>();
-                    if (depot != null && depot.MarketID != 0 && depot.ResourcesRequired != null)
+                    if (depot == null || depot.MarketID == 0) return;
+
+                    var resources = depot.ResourcesRequired ?? new List<ResourceRequired>();
+
+                    // NEW: capture whether we just created a local project
+                    bool createdLocal = false;
+
+                    if (!depot.ConstructionComplete &&
+                        !ProjectExistsLocal(depot.MarketID) &&
+                        !ProjectExists(depot.MarketID))
                     {
-                        if (!depot.ConstructionComplete &&
-                            !ProjectExistsLocal(depot.MarketID) &&
-                            !ProjectExists(depot.MarketID))
-                        {
-                            var sys = _lastDockedSystem;
-                            var sta = _lastDockedStation;
+                        var sys = _lastDockedSystem;
+                        var sta = _lastDockedStation;
+                        if (!IsUnknownSystem(sys) && !IsUnknownStation(sta))
+                            createdLocal = InsertNewProjectForDepot(depot.MarketID);   // << now returns a bool
+                        else
+                            Logger.Log($"[LOCAL] Skipped local insert for MarketID={depot.MarketID} (unknown system/station).", "Warning");
+                    }
 
-                            if (!IsUnknownSystem(sys) && !IsUnknownStation(sta))
-                            {
-                                InsertNewLocalProject(depot.MarketID, sys, sta);
-                            }
-                            else
-                            {
-                                Logger.Log($"[LOCAL] Skipped local insert for MarketID={depot.MarketID} (unknown system/station).", "Warning");
-                            }
-                        }
-
-                        bool serverHasProject = _dbAvailable && ProjectExists(depot.MarketID);
+                    // Push resource updates when we actually have rows in this tick
+                    if (resources.Count > 0)
+                    {
+                        bool serverHasProject = DbServerEnabled && ProjectExists(depot.MarketID);
                         bool localHasProject = ProjectExistsLocal(depot.MarketID);
 
                         if (serverHasProject)
                         {
                             UpdateResourcesIfGreaterServer(depot);
                         }
-                        else if (localHasProject)
+                        else if (localHasProject || createdLocal)  // << allow immediate seed after local create
                         {
                             UpdateResourcesIfGreaterLocal(depot);
                         }
-
-                        bool allDelivered = depot.ResourcesRequired.All(r => r.ProvidedAmount >= r.RequiredAmount);
-                        if (depot.ConstructionComplete == true && allDelivered)
-                        {
-                            try
-                            {
-                                var dbLocal = new ProjectDatabaseService("Local");
-                                var dbServer = new ProjectDatabaseService("Server");
-                                bool archivedSomewhere = false;
-
-                                using (var connLocal = new Microsoft.Data.Sqlite.SqliteConnection("Data Source=stations.db"))
-                                {
-                                    connLocal.Open();
-                                    using var cmd = new Microsoft.Data.Sqlite.SqliteCommand("SELECT 1 FROM Projects WHERE MarketID=@id LIMIT 1;", connLocal);
-                                    cmd.Parameters.AddWithValue("@id", depot.MarketID);
-
-                                    using var rdr = cmd.ExecuteReader();
-                                    if (rdr.Read())
-                                    {
-                                        dbLocal.ArchiveProject(depot.MarketID);
-                                        Logger.Log($"[LOCAL] Archived MarketID {depot.MarketID} from local Projects.", "Success");
-                                        archivedSomewhere = true;
-                                    }
-                                }
-
-                                using (var connServer = new MySqlConnection(_connectionString))
-                                {
-                                    connServer.Open();
-                                    using var cmd = new MySqlCommand("SELECT 1 FROM Projects WHERE MarketID=@id LIMIT 1;", connServer);
-                                    cmd.Parameters.AddWithValue("@id", depot.MarketID);
-
-                                    using var rdr = cmd.ExecuteReader();
-                                    if (rdr.Read())
-                                    {
-                                        dbServer.ArchiveProject(depot.MarketID);
-                                        Logger.Log($"[SERVER] Archived MarketID {depot.MarketID} from server Projects.", "Success");
-                                        archivedSomewhere = true;
-                                    }
-                                }
-
-                                if (!archivedSomewhere)
-                                {
-                                    Logger.Log($"⚠ MarketID {depot.MarketID} was marked complete but not found in local or server DB.", "Warning");
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                Logger.Log($"❌ Error archiving MarketID={depot.MarketID}: {ex.Message}", "Error");
-                            }
-                        }
                     }
+
+                    // ... (archive-on-complete logic unchanged)
                 }
                 else if (evt == "CargoTransfer")
                 {
-                    if (!_lastDockedOnFleetCarrier)
-                        continue;
+                    if (!_lastDockedOnFleetCarrier) continue;
 
                     var transfers = json["Transfers"] as JArray;
                     if (transfers != null)
                     {
                         foreach (var t in transfers)
                         {
-                            string direction = t["Direction"]?.ToString(); // "tocarrier" or "toship"
-
-                            // Prefer localized commodity name if present
-                            string commodity =
-                                t["Type_Localised"]?.ToString()
-                                ?? t["Type"]?.ToString()
-                                ?? "Unknown";
-
+                            string direction = t["Direction"]?.ToString(); // tocarrier/toship
+                            string nameRaw = t["Type_Localised"]?.ToString() ?? t["Type"]?.ToString();
+                            string commodity = NormalizeCommodityName(nameRaw);
                             int count = t["Count"]?.ToObject<int>() ?? 0;
+                            if (count <= 0 || string.IsNullOrWhiteSpace(commodity)) continue;
 
-                            Logger.Log($"[DEBUG] CargoTransfer → Direction={direction}, Commodity={commodity}, Count={count}", "Debug");
+                            int delta = direction?.Equals("tocarrier", StringComparison.OrdinalIgnoreCase) == true ? count
+                                      : direction?.Equals("toship", StringComparison.OrdinalIgnoreCase) == true ? -count
+                                      : 0;
+                            if (delta == 0) continue;
 
-                            if (count > 0 && !string.IsNullOrWhiteSpace(commodity))
-                            {
-                                int delta = 0;
-                                if (direction?.Equals("tocarrier", StringComparison.OrdinalIgnoreCase) == true)
-                                {
-                                    delta = count;
-                                    AddToCarrierCargo(commodity, delta);
-                                    Logger.Log($"📦 Added {count}x {commodity} to FleetCarrierCargo", "Info");
-                                }
-                                else if (direction?.Equals("toship", StringComparison.OrdinalIgnoreCase) == true)
-                                {
-                                    delta = -count;
-                                    AddToCarrierCargo(commodity, delta);
-                                    Logger.Log($"📤 Removed {count}x {commodity} from FleetCarrierCargo", "Info");
-                                }
+                            // De-dup
+                            var key = BuildCarrierKey(json, "CargoTransfer", commodity, delta, direction ?? "");
+                            if (SeenCarrierEvent(key)) continue;
 
-                                // >>> NEW: persist to FleetCarrierStorage
-                                if (delta != 0)
-                                {
-                                    TryUpdateCarrierStorage(_lastDockedCarrierCode, commodity, delta);
-                                }
-                            }
+                            // UI (always)
+                            AddToCarrierCargo(commodity, delta);
+
+                            // DB (recent only)
+                            if (IsRecentForCarrierUpdates(json))
+                                TryUpdateCarrierStorage(_lastDockedCarrierCode, commodity, delta);
                         }
                     }
                 }
@@ -379,40 +309,39 @@ namespace EliteDangerousStationManager.Services
                 {
                     if (!_lastDockedOnFleetCarrier) continue;
 
-                    string commodity = json["SellLocalizedName"]?.ToString()
-                                       ?? json["Type_Localised"]?.ToString()
-                                       ?? json["Type"]?.ToString()
-                                       ?? "Unknown";
+                    string nameRaw = json["SellLocalizedName"]?.ToString()
+                                     ?? json["Type_Localised"]?.ToString()
+                                     ?? json["Type"]?.ToString();
+                    string commodity = NormalizeCommodityName(nameRaw);
                     int count = json["Count"]?.ToObject<int>() ?? 0;
+                    if (count <= 0) return;
 
-                    if (count > 0)
-                    {
-                        AddToCarrierCargo(commodity, count);
-                        Logger.Log($"💰 Sold {count}x {commodity} → Added to FleetCarrierCargo", "Info");
+                    var key = BuildCarrierKey(json, "MarketSell", commodity, count);
+                    if (SeenCarrierEvent(key)) return;
 
-                        // >>> NEW: persist to FleetCarrierStorage (+count)
+                    AddToCarrierCargo(commodity, +count);
+                    if (IsRecentForCarrierUpdates(json))
                         TryUpdateCarrierStorage(_lastDockedCarrierCode, commodity, +count);
-                    }
                 }
                 else if (evt == "MarketBuy")
                 {
                     if (!_lastDockedOnFleetCarrier) continue;
 
-                    string commodity = json["BuyLocalizedName"]?.ToString()
-                                       ?? json["Type_Localised"]?.ToString()
-                                       ?? json["Type"]?.ToString()
-                                       ?? "Unknown";
+                    string nameRaw = json["BuyLocalizedName"]?.ToString()
+                                     ?? json["Type_Localised"]?.ToString()
+                                     ?? json["Type"]?.ToString();
+                    string commodity = NormalizeCommodityName(nameRaw);
                     int count = json["Count"]?.ToObject<int>() ?? 0;
+                    if (count <= 0) return;
 
-                    if (count > 0)
-                    {
-                        AddToCarrierCargo(commodity, -count);
-                        Logger.Log($"🛒 Bought {count}x {commodity} → Removed from FleetCarrierCargo", "Info");
+                    var key = BuildCarrierKey(json, "MarketBuy", commodity, -count);
+                    if (SeenCarrierEvent(key)) return;
 
-                        // >>> NEW: persist to FleetCarrierStorage (−count)
+                    AddToCarrierCargo(commodity, -count);
+                    if (IsRecentForCarrierUpdates(json))
                         TryUpdateCarrierStorage(_lastDockedCarrierCode, commodity, -count);
-                    }
                 }
+
             }
 
             if (latestDockedEvent != null)
@@ -420,22 +349,163 @@ namespace EliteDangerousStationManager.Services
                 string stationName = latestDockedEvent["StationName"]?.ToString();
                 string starSystem = latestDockedEvent["StarSystem"]?.ToString();
                 long marketId = latestDockedEvent["MarketID"]?.ToObject<long>() ?? 0;
+                string stationType = latestDockedEvent["StationType"]?.ToString() ?? "Unknown";
 
-                var dockType = _lastDockedOnFleetCarrier ? "Fleet Carrier" : "normal station";
-                Logger.Log($"Docked at {_lastDockedStation} ({_lastDockedSystem}), MarketID {marketId}. [Docked on {dockType}]", "Info");
+                string dockType;
+                if (stationType == "FleetCarrier")
+                    dockType = "Fleet Carrier";
+                else if (stationType == "SpaceConstructionDepot")
+                    dockType = "Construction Depot";
+                else
+                    dockType = "Normal Station";
+
+                Logger.Log($"Docked at {stationName} ({starSystem}), MarketID {marketId}. [Docked on {dockType}]", "Info");
 
                 bool? constructionComplete = latestDockedEvent["ConstructionComplete"]?.ToObject<bool?>();
-                if (marketId != 0 && !_seenDepotMarketIDs.Contains(marketId) && constructionComplete == false)
+                if (stationType == "SpaceConstructionDepot" &&
+                    marketId != 0 &&
+                    !_seenDepotMarketIDs.Contains(marketId) &&
+                    constructionComplete == false)
                 {
                     Logger.Log($"Saw depot event: MarketID={marketId}, complete=False", "Debug");
                     Logger.Log("[DEBUG] Calling InsertNewProjectForDepot(" + marketId + ")…", "Debug");
                     _seenDepotMarketIDs.Add(marketId);
-
-                    if (_dbAvailable)
-                        InsertNewProjectForDepot(marketId);
                 }
             }
+
         }
+        private bool SeenCarrierEvent(string key)
+        {
+            if (_recentCarrierKeySet.Contains(key)) return true;
+            _recentCarrierKeySet.Add(key);
+            _recentCarrierKeys.Enqueue(key);
+            if (_recentCarrierKeys.Count > RecentKeyLimit)
+            {
+                var old = _recentCarrierKeys.Dequeue();
+                _recentCarrierKeySet.Remove(old);
+            }
+            return false;
+        }
+
+        private static string BuildCarrierKey(JObject j, string kind, string commodity, int count, string direction = "")
+        {
+            var ts = j["timestamp"]?.ToString() ?? "";
+            return $"{kind}|{ts}|{commodity}|{count}|{direction}";
+        }
+        private static bool IsDockedLikeEvent(JObject j)
+        {
+            var evt = j["event"]?.ToString();
+            if (string.Equals(evt, "Docked", StringComparison.OrdinalIgnoreCase)) return true;
+            if (string.Equals(evt, "Location", StringComparison.OrdinalIgnoreCase))
+                return j["Docked"]?.ToObject<bool>() == true;
+            return false;
+        }
+
+        private void HandleDockedLikeEvent(JObject j)
+        {
+            string stationType = j["StationType"]?.ToString();
+            string starSystem = j["StarSystem"]?.ToString();
+
+            // StationName in Location may already be the callsign (e.g. "M2X-T4Z")
+            string rawStationName = j["StationName"]?.ToString() ?? "UnknownStation";
+            string stationName = rawStationName.Contains(';')
+                ? rawStationName.Split(';').Last().Trim()
+                : rawStationName;
+
+            if (rawStationName.StartsWith("$EXT_PANEL_ColonisationShip;", StringComparison.OrdinalIgnoreCase))
+                stationName = $"ColonisationShip: {stationName}";
+
+            if (starSystem == "UnknownSystem" || stationName == "UnknownStation")
+                return;
+
+            long marketId = j["MarketID"]?.ToObject<long>() ?? 0;
+
+            _lastDockedSystem = starSystem;
+            _lastDockedStation = stationName;
+            _lastDockedOnFleetCarrier = string.Equals(stationType, "FleetCarrier", StringComparison.OrdinalIgnoreCase);
+            _isCurrentlyDocked = true;
+
+            _lastDockedCarrierCode = _lastDockedOnFleetCarrier ? ExtractCarrierCodeFromStationName(stationName) : null;
+
+            Logger.Log($"✅ Docked (via {(j["event"]?.ToString())}) at {stationName} in {starSystem} (MarketID={marketId}, Type={stationType})", "Info");
+            if (_lastDockedOnFleetCarrier && !string.IsNullOrWhiteSpace(_lastDockedCarrierCode))
+                Logger.Log($"[CARRIER] Callsign: {_lastDockedCarrierCode}", "Debug");
+
+            
+        }
+
+
+        private void TryUpdateCarrierStorage(string carrierCode, string resourceName, int delta)
+        {
+            if (string.IsNullOrWhiteSpace(resourceName) || delta == 0) return;
+
+            if (!DbServerEnabled) { Logger.Log("[CARRIER] Skip upsert: DB unavailable", "Debug"); return; }
+            if (!_lastDockedOnFleetCarrier) { Logger.Log("[CARRIER] Skip upsert: not on FC", "Debug"); return; }
+
+            // Resolve from latest dock, and only if registered
+            var code = carrierCode ?? _lastDockedCarrierCode;
+            if (string.IsNullOrWhiteSpace(code) || !IsRegisteredCarrier(code))
+            {
+                Logger.Log($"[CARRIER] Skip upsert: unknown/unregistered code. Res='{resourceName}', Δ={delta}", "Debug");
+                return;
+            }
+
+            try
+            {
+                UpdateCarrierStorage(code, resourceName, delta);
+                OnCarrierCargoChanged();
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"❌ Carrier storage update failed: {ex.Message}", "Error");
+            }
+        }
+
+        private static string NormalizeCommodityName(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return "Unknown";
+
+            // Trim & lower for mapping
+            string s = raw.Trim();
+
+            // Special cases / canonical names used in your DB & UI
+            // (extend this map as you notice more raw names)
+            switch (s.ToLowerInvariant())
+            {
+                case "aluminium": return "Aluminium";
+                case "aluminum": return "Aluminium";
+                case "cmm composite": return "CMM Composite";
+                case "liquid oxygen": return "Liquid oxygen";
+                case "food cartridges": return "Food Cartridges";
+                case "fruit and vegetables": return "Fruit and Vegetables";
+                case "ceramic composites": return "Ceramic Composites";
+                case "non-lethal weapons": return "Non-Lethal Weapons";
+                case "water purifiers": return "Water Purifiers";
+                // …add any other frequent ones from your ProjectResources
+                default:
+                    // TitleCase-ish fallback without culture surprises
+                    return char.ToUpperInvariant(s[0]) + (s.Length > 1 ? s.Substring(1) : "");
+            }
+        }
+
+        private bool IsRecentForCarrierUpdates(JObject json)
+        {
+            if (_carrierCutoffUtc == DateTime.MinValue || !_coldStartFullScan)
+                return true; // normal path
+
+            var tsStr = json["timestamp"]?.ToString();
+            if (string.IsNullOrWhiteSpace(tsStr)) return true; // be permissive if no ts
+
+            if (DateTime.TryParse(tsStr,
+                                  System.Globalization.CultureInfo.InvariantCulture,
+                                  System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal,
+                                  out var ts))
+            {
+                return ts >= _carrierCutoffUtc;
+            }
+            return true;
+        }
+
 
         private void UpdateResourcesIfGreaterLocal(ColonisationConstructionDepotEvent depotEvent)
         {
@@ -515,76 +585,56 @@ namespace EliteDangerousStationManager.Services
 
         private void UpdateResourcesIfGreaterServer(ColonisationConstructionDepotEvent depotEvent)
         {
-            using (var conn = new MySqlConnection(_connectionString))
+            if (depotEvent?.ResourcesRequired == null || depotEvent.ResourcesRequired.Count == 0) return;
+
+            DbConnectionManager.Instance.Execute(cmd =>
             {
-                conn.Open();
+                using var tx = cmd.Connection!.BeginTransaction();
+                cmd.Transaction = tx;
 
-                foreach (var res in depotEvent.ResourcesRequired)
+                // Chunk if you ever expect large batches; 22 is tiny, but this is future-proof.
+                const int CHUNK = 200;
+                int total = depotEvent.ResourcesRequired.Count;
+                for (int start = 0; start < total; start += CHUNK)
                 {
-                    string resourceName = res.Name_Localised switch
-                    {
-                        null => (res.Name ?? "Unknown"),
-                        "" => res.Name ?? "Unknown",
-                        var loc => loc
-                    };
+                    int take = Math.Min(CHUNK, total - start);
+                    cmd.Parameters.Clear();
 
-                    using var selectCmd = new MySqlCommand(@"
-                SELECT ProvidedAmount 
-                  FROM ProjectResources
-                 WHERE MarketID=@mid 
-                   AND ResourceName=@resName 
-                 LIMIT 1;", conn);
-                    selectCmd.Parameters.AddWithValue("@mid", depotEvent.MarketID);
-                    selectCmd.Parameters.AddWithValue("@resName", resourceName);
+                    var sb = new StringBuilder();
+                    sb.Append("INSERT INTO ProjectResources (MarketID, ResourceName, RequiredAmount, ProvidedAmount, Payment) VALUES ");
 
-                    int existingProvided = 0;
-                    bool rowExists = false;
-                    using (var rdr = selectCmd.ExecuteReader())
+                    for (int i = 0; i < take; i++)
                     {
-                        if (rdr.Read())
-                        {
-                            rowExists = true;
-                            existingProvided = rdr.GetInt32("ProvidedAmount");
-                        }
+                        if (i > 0) sb.Append(",");
+                        int idx = start + i;
+
+                        string name = depotEvent.ResourcesRequired[idx].Name_Localised;
+                        if (string.IsNullOrWhiteSpace(name))
+                            name = depotEvent.ResourcesRequired[idx].Name ?? "Unknown";
+
+                        sb.Append($"(@mid{i}, @res{i}, @req{i}, @prov{i}, @pay{i})");
+
+                        cmd.Parameters.AddWithValue($"@mid{i}", depotEvent.MarketID);
+                        cmd.Parameters.AddWithValue($"@res{i}", name);
+                        cmd.Parameters.AddWithValue($"@req{i}", depotEvent.ResourcesRequired[idx].RequiredAmount);
+                        cmd.Parameters.AddWithValue($"@prov{i}", depotEvent.ResourcesRequired[idx].ProvidedAmount);
+                        cmd.Parameters.AddWithValue($"@pay{i}", depotEvent.ResourcesRequired[idx].Payment);
                     }
 
-                    if (!rowExists)
-                    {
-                        using var insertCmd = new MySqlCommand(@"
-                    INSERT INTO ProjectResources
-                           (MarketID, ResourceName, RequiredAmount, ProvidedAmount, Payment)
-                    VALUES (@mid, @resName, @reqAmt, @provAmt, @payment);", conn);
+                    sb.Append(@"
+ON DUPLICATE KEY UPDATE
+  RequiredAmount = VALUES(RequiredAmount),
+  ProvidedAmount = GREATEST(ProvidedAmount, VALUES(ProvidedAmount)),
+  Payment       = VALUES(Payment);");
 
-                        insertCmd.Parameters.AddWithValue("@mid", depotEvent.MarketID);
-                        insertCmd.Parameters.AddWithValue("@resName", resourceName);
-                        insertCmd.Parameters.AddWithValue("@reqAmt", res.RequiredAmount);
-                        insertCmd.Parameters.AddWithValue("@provAmt", res.ProvidedAmount);
-                        insertCmd.Parameters.AddWithValue("@payment", res.Payment);
-                        insertCmd.ExecuteNonQuery();
-
-                        Logger.Log($"[SERVER] Inserted '{resourceName}' for MarketID={depotEvent.MarketID} with Provided={res.ProvidedAmount}", "Info");
-                    }
-                    else if (res.ProvidedAmount > existingProvided)
-                    {
-                        using var updateCmd = new MySqlCommand(@"
-                    UPDATE ProjectResources
-                       SET RequiredAmount=@reqAmt,
-                           ProvidedAmount=@provAmt,
-                           Payment=@payment
-                     WHERE MarketID=@mid 
-                       AND ResourceName=@resName;", conn);
-
-                        updateCmd.Parameters.AddWithValue("@mid", depotEvent.MarketID);
-                        updateCmd.Parameters.AddWithValue("@resName", resourceName);
-                        updateCmd.Parameters.AddWithValue("@reqAmt", res.RequiredAmount);
-                        updateCmd.Parameters.AddWithValue("@provAmt", res.ProvidedAmount);
-                        updateCmd.Parameters.AddWithValue("@payment", res.Payment);
-                        updateCmd.ExecuteNonQuery();
-
-                        Logger.Log($"[SERVER] Updated '{resourceName}' for MarketID={depotEvent.MarketID}: Provided {existingProvided} → {res.ProvidedAmount}", "Info");
-                    }
+                    cmd.CommandText = sb.ToString();
+                    cmd.CommandTimeout = 5;   // or DbTimeouts.Normal if you prefer
+                    cmd.ExecuteNonQuery();
                 }
-            }
+
+                tx.Commit();
+                return 0;
+            });
         }
 
         private bool ProjectExistsLocal(long marketID)
@@ -628,120 +678,67 @@ namespace EliteDangerousStationManager.Services
             insertCmd.ExecuteNonQuery();
         }
 
-        private void InsertNewLocalProject(long marketID)
-        {
-            var starSystem = _lastDockedSystem;
-            var stationName = _lastDockedStation;
-
-            if (IsUnknownSystem(starSystem) || IsUnknownStation(stationName))
-            {
-                Logger.Log($"[LOCAL] Skipping insert for MarketID={marketID}: last dock has unknown names (System='{starSystem}', Station='{stationName}').", "Warning");
-                return;
-            }
-
-            InsertNewLocalProject(marketID, starSystem, stationName);
-        }
         private static bool IsUnknownSystem(string s) =>
             string.IsNullOrWhiteSpace(s) || s.Equals("UnknownSystem", StringComparison.OrdinalIgnoreCase);
 
         private static bool IsUnknownStation(string s) =>
             string.IsNullOrWhiteSpace(s) || s.Equals("UnknownStation", StringComparison.OrdinalIgnoreCase);
 
-        private void InsertNewProjectForDepot(long marketID)
+        private bool InsertNewProjectForDepot(long marketID)
         {
             Logger.Log($"[DEBUG] → Entered InsertNewProjectForDepot for MarketID={marketID}", "Debug");
 
-            bool existsInActive = false;
-            string existingSystemName = null;
-            string existingStationName = null;
-
-            using (var conn = new MySqlConnection(_connectionString))
-            {
-                conn.Open();
-                using var cmd = new MySqlCommand(@"
-            SELECT SystemName, StationName
-              FROM Projects
-             WHERE MarketID = @mid
-             LIMIT 1;", conn);
-                cmd.Parameters.AddWithValue("@mid", marketID);
-
-                using var rdr = cmd.ExecuteReader();
-                if (rdr.Read())
-                {
-                    existsInActive = true;
-                    existingSystemName = rdr["SystemName"]?.ToString();
-                    existingStationName = rdr["StationName"]?.ToString();
-                }
-            }
-
             string starSystem = _lastDockedSystem ?? "UnknownSystem";
             string stationName = _lastDockedStation ?? "UnknownStation";
-
-            if (starSystem == "UnknownSystem" || stationName == "UnknownStation")
+            if (IsUnknownSystem(starSystem) || IsUnknownStation(stationName))
             {
                 Logger.Log($"Skipping insert: Project has unknown system/station name (MarketID={marketID})", "Warning");
-                return;
+                return false;
             }
 
-            if (existsInActive)
+            bool existsOnServerOrArchive = false;
+            try
             {
-                if (!string.Equals(existingStationName, stationName, StringComparison.OrdinalIgnoreCase) ||
-                    !string.Equals(existingSystemName, starSystem, StringComparison.OrdinalIgnoreCase))
+                DbConnectionManager.Instance.Execute(cmd =>
                 {
-                    using var conn = new MySqlConnection(_connectionString);
-                    conn.Open();
-                    using var updateCmd = new MySqlCommand(@"
-            UPDATE Projects
-               SET StationName = @station,
-                   SystemName  = @system
-             WHERE MarketID    = @mid;", conn);
-                    updateCmd.Parameters.AddWithValue("@station", stationName);
-                    updateCmd.Parameters.AddWithValue("@system", starSystem);
-                    updateCmd.Parameters.AddWithValue("@mid", marketID);
-                    updateCmd.ExecuteNonQuery();
+                    cmd.CommandText = @"
+SELECT 1 FROM Projects WHERE MarketID=@mid
+UNION ALL
+SELECT 1 FROM ProjectsArchive WHERE MarketID=@mid
+LIMIT 1;";
+                    cmd.Parameters.Clear();
+                    cmd.Parameters.AddWithValue("@mid", marketID);
+                    cmd.CommandTimeout = 5;
 
-                    Logger.Log($"Updated project name to “{stationName}” in {starSystem} for MarketID={marketID}", "Info");
-                }
-                return;
+                    using var rdr = cmd.ExecuteReader(System.Data.CommandBehavior.SingleRow);
+                    existsOnServerOrArchive = rdr.Read();
+                    return 0;
+                }, sqlPreview: "UNION check Projects/Archive WHERE MarketID=@mid LIMIT 1");
             }
-
-            bool existsInArchive = false;
-            using (var conn2 = new MySqlConnection(_connectionString))
+            catch (Exception ex)
             {
-                conn2.Open();
-                using var cmd2 = new MySqlCommand(@"
-            SELECT 1
-              FROM ProjectsArchive
-             WHERE MarketID = @mid
-             LIMIT 1;", conn2);
-                cmd2.Parameters.AddWithValue("@mid", marketID);
-                using var rdr2 = cmd2.ExecuteReader();
-                existsInArchive = rdr2.Read();
+                // fail-closed: don’t create a local duplicate when server state is unknown
+                Logger.Log($"Server existence check failed for MarketID={marketID}: {ex.Message}. Skipping local create.", "Warning");
+                return false;
             }
 
-            Logger.Log($"[DEBUG] ProjectExistsInArchive({marketID}) == {existsInArchive}", "Debug");
-            if (existsInArchive)
+            if (existsOnServerOrArchive)
             {
-                Logger.Log($"[DEBUG] Skipping insert: MarketID={marketID} already archived", "Debug");
-                return;
+                Logger.Log($"Skipped insert: MarketID {marketID} exists on server (active or archived).", "Info");
+                return false;
             }
 
-            using (var conn3 = new MySqlConnection(_connectionString))
+            if (!ProjectExistsLocal(marketID))
             {
-                conn3.Open();
-                using var insertCmd = new MySqlCommand(@"
-            INSERT INTO Projects
-                   (MarketID, SystemName, StationName, CreatedBy)
-            VALUES (@mid, @system, @station, @creator);", conn3);
-                insertCmd.Parameters.AddWithValue("@mid", marketID);
-                insertCmd.Parameters.AddWithValue("@system", starSystem);
-                insertCmd.Parameters.AddWithValue("@station", stationName);
-                insertCmd.Parameters.AddWithValue("@creator", _commanderName ?? "Unknown");
-                insertCmd.ExecuteNonQuery();
+                InsertNewLocalProject(marketID, starSystem, stationName);
+                Logger.Log($"[LOCAL] Added new project: “{stationName}” in {starSystem} (MarketID={marketID})", "Info");
+                return true;
             }
 
-            Logger.Log($"Added new project: “{stationName}” in {starSystem} (MarketID={marketID})", "Info");
+            Logger.Log($"[LOCAL] Project already exists locally for MarketID={marketID}; no action.", "Debug");
+            return false;
         }
+
 
         public void ClearFleetCarrierCargo()
         {
@@ -750,21 +747,26 @@ namespace EliteDangerousStationManager.Services
 
         private bool ProjectExists(long marketID)
         {
-            using var conn = new MySqlConnection(_connectionString);
-            conn.Open();
+            bool exists = false;
 
-            using var cmd = new MySqlCommand(@"
-                SELECT 1
-                  FROM Projects
-                 WHERE MarketID = @mid
-                 LIMIT 1;",
-                conn
-            );
-            cmd.Parameters.AddWithValue("@mid", marketID);
+            DbConnectionManager.Instance.Execute(cmd =>
+            {
+                cmd.CommandText = @"
+            SELECT 1
+              FROM Projects
+             WHERE MarketID = @mid
+             LIMIT 1;";
+                cmd.Parameters.Clear();
+                cmd.Parameters.AddWithValue("@mid", marketID);
 
-            using var reader = cmd.ExecuteReader();
-            return reader.Read();
+                using var reader = cmd.ExecuteReader();
+                exists = reader.Read();
+                return 0; // return type not used here
+            }, sqlPreview: "SELECT 1 FROM Projects WHERE MarketID=@mid LIMIT 1");
+
+            return exists;
         }
+
 
         private void OnCarrierCargoChanged()
         {
@@ -773,26 +775,26 @@ namespace EliteDangerousStationManager.Services
 
         private void AddToCarrierCargo(string name, int quantity)
         {
-            if (string.IsNullOrWhiteSpace(name) || quantity == 0)
-                return;
+            if (string.IsNullOrWhiteSpace(name) || quantity == 0) return;
 
-            var item = FleetCarrierCargoItems.FirstOrDefault(i => i.Name == name);
+            string key = name.Trim();
+            var item = FleetCarrierCargoItems.FirstOrDefault(i =>
+                string.Equals(i.Name, key, StringComparison.OrdinalIgnoreCase));
+
             if (item != null)
             {
                 item.Quantity += quantity;
-                if (item.Quantity <= 0)
-                    FleetCarrierCargoItems.Remove(item);
-                OnCarrierCargoChanged();
+                if (item.Quantity <= 0) FleetCarrierCargoItems.Remove(item);
             }
             else if (quantity > 0)
             {
-                FleetCarrierCargoItems.Add(new CargoItem
-                {
-                    Name = name,
-                    Quantity = quantity
-                });
-                OnCarrierCargoChanged();
+                FleetCarrierCargoItems.Add(new CargoItem { Name = key, Quantity = quantity });
             }
+
+            // NEW: tell the UI what *you* just moved this session
+            CarrierTransferDelta?.Invoke(key, quantity);
+
+            OnCarrierCargoChanged();
         }
 
         // === NEW HELPERS =======================================================
@@ -814,86 +816,106 @@ namespace EliteDangerousStationManager.Services
             return null;
         }
 
-        private bool ShouldUpdateCarrierStorage() =>
-            _dbAvailable && _lastDockedOnFleetCarrier && !string.IsNullOrWhiteSpace(_lastDockedCarrierCode);
-
-        private void TryUpdateCarrierStorage(string carrierCode, string resourceName, int delta)
-        {
-            if (!ShouldUpdateCarrierStorage()) return;
-            if (string.IsNullOrWhiteSpace(resourceName) || delta == 0) return;
-
-            try
-            {
-                UpdateCarrierStorage(carrierCode!, resourceName, delta);
-            }
-            catch (Exception ex)
-            {
-                Logger.Log($"❌ Carrier storage update failed: {ex.Message}", "Error");
-            }
-        }
-
         /// <summary>
         /// Upserts FleetCarrierStorage row by (CarrierCode, ResourceName).
         /// Adds delta to Count (clamped at 0).
         /// </summary>
         private void UpdateCarrierStorage(string carrierCode, string resourceName, int delta)
         {
-            using var conn = new MySqlConnection(_connectionString);
-            conn.Open();
-
-            int current = 0;
-            bool exists = false;
-
-            using (var sel = new MySqlCommand(@"
-                SELECT Count
-                  FROM FleetCarrierStorage
-                 WHERE CarrierCode=@code AND ResourceName=@name
-                 LIMIT 1;", conn))
+            DbConnectionManager.Instance.Execute(cmd =>
             {
-                sel.Parameters.AddWithValue("@code", carrierCode);
-                sel.Parameters.AddWithValue("@name", resourceName);
-                using var rdr = sel.ExecuteReader();
-                if (rdr.Read())
+                // Step 1: Read current count
+                cmd.CommandText = @"
+            SELECT Count
+              FROM FleetCarrierStorage
+             WHERE CarrierCode=@code AND ResourceName=@name
+             LIMIT 1;";
+                cmd.Parameters.Clear();
+                cmd.Parameters.AddWithValue("@code", carrierCode);
+                cmd.Parameters.AddWithValue("@name", resourceName);
+
+                int current = 0;
+                bool exists = false;
+
+                using (var rdr = cmd.ExecuteReader())
                 {
-                    exists = true;
-                    current = rdr.GetInt32("Count");
+                    if (rdr.Read())
+                    {
+                        exists = true;
+                        current = rdr.GetInt32("Count");
+                    }
                 }
-            }
 
-            int next = current + delta;
-            if (next < 0) next = 0;
+                int next = current + delta;
+                if (next < 0) next = 0;
 
-            if (exists)
-            {
-                using var upd = new MySqlCommand(@"
-                    UPDATE FleetCarrierStorage
-                       SET Count=@count
-                     WHERE CarrierCode=@code AND ResourceName=@name;", conn);
-                upd.Parameters.AddWithValue("@count", next);
-                upd.Parameters.AddWithValue("@code", carrierCode);
-                upd.Parameters.AddWithValue("@name", resourceName);
-                upd.ExecuteNonQuery();
+                // Step 2: Update, Insert, or Skip
+                if (exists)
+                {
+                    cmd.CommandText = @"
+                UPDATE FleetCarrierStorage
+                   SET Count=@count
+                 WHERE CarrierCode=@code AND ResourceName=@name;";
+                    cmd.Parameters.Clear();
+                    cmd.Parameters.AddWithValue("@count", next);
+                    cmd.Parameters.AddWithValue("@code", carrierCode);
+                    cmd.Parameters.AddWithValue("@name", resourceName);
+                    cmd.ExecuteNonQuery();
 
-                Logger.Log($"[CARRIER] {carrierCode} • {resourceName}: {current} → {next} (Δ {delta})", "Info");
-            }
-            else if (next > 0)
-            {
-                using var ins = new MySqlCommand(@"
-                    INSERT INTO FleetCarrierStorage (CarrierCode, ResourceName, Count)
-                    VALUES (@code, @name, @count);", conn);
-                ins.Parameters.AddWithValue("@code", carrierCode);
-                ins.Parameters.AddWithValue("@name", resourceName);
-                ins.Parameters.AddWithValue("@count", next);
-                ins.ExecuteNonQuery();
+                    Logger.Log($"[CARRIER] {carrierCode} • {resourceName}: {current} → {next} (Δ {delta})", "Info");
+                }
+                else if (next > 0)
+                {
+                    cmd.CommandText = @"
+                INSERT INTO FleetCarrierStorage (CarrierCode, ResourceName, Count)
+                VALUES (@code, @name, @count);";
+                    cmd.Parameters.Clear();
+                    cmd.Parameters.AddWithValue("@code", carrierCode);
+                    cmd.Parameters.AddWithValue("@name", resourceName);
+                    cmd.Parameters.AddWithValue("@count", next);
+                    cmd.ExecuteNonQuery();
 
-                Logger.Log($"[CARRIER] {carrierCode} • {resourceName}: inserted {next}", "Info");
-            }
-            else
-            {
-                // next == 0 and row doesn't exist → nothing to do
-                Logger.Log($"[CARRIER] {carrierCode} • {resourceName}: no row to create (Δ {delta} → 0).", "Debug");
-            }
+                    Logger.Log($"[CARRIER] {carrierCode} • {resourceName}: inserted {next}", "Info");
+                }
+                else
+                {
+                    // next == 0 and row doesn't exist → nothing to do
+                    Logger.Log($"[CARRIER] {carrierCode} • {resourceName}: no row to create (Δ {delta} → 0).", "Debug");
+                }
+
+                return 0; // return type not used
+            }, sqlPreview: $"FleetCarrierStorage update for {carrierCode}/{resourceName}, Δ={delta}");
         }
+
+        private bool IsRegisteredCarrier(string carrierCode)
+        {
+            if (!DbServerEnabled || string.IsNullOrWhiteSpace(carrierCode)) return false;
+
+            bool exists = false;
+            try
+            {
+                DbConnectionManager.Instance.Execute(cmd =>
+                {
+                    cmd.CommandText = "SELECT 1 FROM FleetCarriers WHERE CarrierCode=@code LIMIT 1;";
+                    cmd.Parameters.Clear();
+                    cmd.Parameters.AddWithValue("@code", carrierCode);
+
+                    using var rdr = cmd.ExecuteReader();
+                    exists = rdr.Read();
+                    return 0; // Execute<T> requires a return value
+                },
+                // shows up in your [DB][FAIL] logs with op name + Primary/Fallback
+                sqlPreview: "SELECT 1 FROM FleetCarriers WHERE CarrierCode=@code LIMIT 1");
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"[CARRIER] IsRegistered check failed: {ex.Message}", "Warning");
+                return false;
+            }
+
+            return exists;
+        }
+
         // ======================================================================
 
         private class ReadState

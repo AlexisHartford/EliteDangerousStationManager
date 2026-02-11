@@ -1,10 +1,13 @@
 ﻿using EliteDangerousStationManager.Helpers;
+using EliteDangerousStationManager.Services;
 using System;
 using System.IO;
 using System.Reflection;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
+using Application = System.Windows.Application;
+using MessageBox = System.Windows.MessageBox;
 
 namespace EliteDangerousStationManager
 {
@@ -20,15 +23,53 @@ namespace EliteDangerousStationManager
             this.DispatcherUnhandledException += OnDispatcherUnhandledException;
             AppDomain.CurrentDomain.UnhandledException += OnDomainUnhandledException;
             TaskScheduler.UnobservedTaskException += OnTaskSchedulerException;
+            // Unobserved background task exceptions
+            TaskScheduler.UnobservedTaskException += (s, e) =>
+            {
+                try { Logger.Log($"[UnobservedTaskException] {e.Exception}", "Error"); }
+                catch { /* last-chance */ }
+                e.SetObserved(); // prevents process crash
+            };
+
+            // UI thread exceptions
+            this.DispatcherUnhandledException += (s, e) =>
+            {
+                Logger.Log($"[DispatcherUnhandledException] {e.Exception}", "Error");
+                e.Handled = true;
+            };
+
+            // Non-UI / final fallback
+            AppDomain.CurrentDomain.UnhandledException += (s, e) =>
+            {
+                Logger.Log($"[UnhandledException] {e.ExceptionObject}", "Error");
+            };
         }
 
         protected override void OnStartup(StartupEventArgs e)
         {
             try
             {
-                string configPath = ConfigHelper.GetSettingsFilePath();
+                // 1) Global handlers FIRST — before any background tasks/timers can start
+                TaskScheduler.UnobservedTaskException += (s, evt) =>
+                {
+                    evt.SetObserved();
+                    Logger.Log($"[UnobservedTaskException] {evt.Exception}", "Error");
+                };
 
-                // ✅ Auto-create config file on first install
+                AppDomain.CurrentDomain.UnhandledException += (s, evt) =>
+                {
+                    Logger.Log($"[UnhandledException] {evt.ExceptionObject}", "Error");
+                };
+
+                // WPF UI thread exceptions (prevents process-terminating crashes from async void handlers, etc.)
+                this.DispatcherUnhandledException += (s, evt) =>
+                {
+                    Logger.Log($"[DispatcherUnhandledException] {evt.Exception}", "Error");
+                    evt.Handled = true; // keep app alive; you can choose otherwise
+                };
+
+                // 2) Config & mode selection
+                string configPath = ConfigHelper.GetSettingsFilePath();
                 if (!File.Exists(configPath))
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(configPath)
@@ -36,28 +77,44 @@ namespace EliteDangerousStationManager
 
                     File.WriteAllLines(configPath, new[]
                     {
-                        "",             // ✅ Line 1: API Key placeholder
-                        "#FFFF6B35",    // ✅ Line 2: Default highlight color
-                        "false"         // ✅ Line 3: Public mode off
-                    });
+                "",             // Line 1: API Key placeholder
+                "#FFFF6B35",    // Line 2: Default highlight color
+                "false"         // Line 3: Public/Server mode off
+            });
 
                     Logger.Log("Created default settings.config for first install.", "Info");
                     CurrentDbMode = "Local";
                 }
                 else
                 {
-                    // ✅ Read config file if it exists
                     var lines = File.ReadAllLines(configPath);
-                    if (lines.Length > 2 && lines[2].Trim().ToLower() == "true")
+                    CurrentDbMode = (lines.Length > 2 && lines[2].Trim().Equals("true", StringComparison.OrdinalIgnoreCase))
+                        ? "Server"
+                        : "Local";
+                }
+
+                    var primary = System.Configuration.ConfigurationManager.ConnectionStrings["PrimaryDB"]?.ConnectionString;
+                    var fallback = System.Configuration.ConfigurationManager.ConnectionStrings["FallbackDB"]?.ConnectionString;
+
+                    if (string.IsNullOrWhiteSpace(primary) && string.IsNullOrWhiteSpace(fallback))
                     {
-                        CurrentDbMode = "Server";
+                        Logger.Log("No PrimaryDB/FallbackDB connection strings found; staying in Local mode for this session.", "Warning");
+                        CurrentDbMode = "Local";
                     }
                     else
                     {
-                        CurrentDbMode = "Local";
-                    }
-                }
+                        DbConnectionManager.Initialize(primary, fallback);
 
+                        // One-time startup log of DB state
+                        var mgr = DbConnectionManager.Instance;
+                        Logger.Log(
+                            mgr.OnFailover ? "Database: Fallback (ON FAILOVER)" : "Database: Primary",
+                            mgr.OnFailover ? "Warning" : "Info"
+                        );
+                    }
+                
+
+                // 4) Let WPF create the main window AFTER handlers + (optional) DB init
                 base.OnStartup(e);
             }
             catch (Exception ex)
@@ -67,6 +124,7 @@ namespace EliteDangerousStationManager
                 Environment.Exit(1);
             }
         }
+
         // 🔵 UI thread exceptions
         private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
         {

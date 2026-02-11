@@ -6,15 +6,24 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <UseWindowsForms>False</UseWindowsForms>
+    <UseWindowsForms>True</UseWindowsForms>
     <ApplicationIcon>file_00000000b05c622f99b88bdc0c151db8.ico</ApplicationIcon>
-    <Version>1.0.1.53</Version>
+
+    <!-- Customize this stuff -->
+    <ProductName>StationManager</ProductName>
+    <InstallerFileName>Setup.exe</InstallerFileName>
+    <PublicDownloadBase>https://github.com/AlexisHartford/EliteDangerousStationManager/releases/download/V1.3/</PublicDownloadBase>
+    <LatestJsonOutputPath>X:\latest.json</LatestJsonOutputPath>
+
+    <!-- Lock the major.minor.patch you want; only the 4th part will auto-bump -->
+    <AutoVersionBase>1.0.1</AutoVersionBase>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Remove="Helpers\DatabaseConnectionManager.cs" />
     <Compile Remove="InaraSender.cs" />
   </ItemGroup>
+  
 
   <ItemGroup>
     <None Remove="template_stations.db" />
@@ -29,7 +38,6 @@
     <PackageReference Include="MySql.Data" Version="9.3.0" />
     <PackageReference Include="NetMQ" Version="4.0.1.15" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <Reference Include="System.Windows.Forms" />
   </ItemGroup>
 
   <ItemGroup>
@@ -52,5 +60,18 @@
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
     </EmbeddedResource>
   </ItemGroup>
+  
+
+  
+
+
+
+
+
+  
+
+
+
+
 
 </Project>

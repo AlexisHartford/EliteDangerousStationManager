@@ -7,6 +7,13 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using EliteDangerousStationManager.Models;
+using MessageBox = System.Windows.MessageBox;
+using ComboBox = System.Windows.Controls.ComboBox;
+using Color = System.Windows.Media.Color;
+using CheckBox = System.Windows.Controls.CheckBox;
+using Brushes = System.Windows.Media.Brushes;
+using Button = System.Windows.Controls.Button;
+using Brush = System.Windows.Media.Brush;
 
 
 namespace ColonizationPlanner

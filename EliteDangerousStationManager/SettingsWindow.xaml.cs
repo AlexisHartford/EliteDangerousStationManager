@@ -3,6 +3,7 @@ using System;
 using System.IO;
 using System.Linq; // for OfType<>
 using System.Windows;
+using Application = System.Windows.Application;
 
 namespace EliteDangerousStationManager
 {

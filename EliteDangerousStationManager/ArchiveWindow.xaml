@@ -1,11 +1,19 @@
 ﻿<Window x:Class="EliteDangerousStationManager.ArchiveWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:EliteDangerousStationManager"
         Title="Archived Projects"
         Height="600" Width="800"
         WindowStartupLocation="CenterOwner"
         Background="#111">
+
     <Grid Margin="10">
+        <Grid.Resources>
+            <!-- top-level converter in the same CLR namespace -->
+            <local:StringEqualsToVisibilityConverter x:Key="OwnerVis" CaseInsensitive="True"/>
+        </Grid.Resources>
+
+
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -60,6 +68,22 @@
                             <!-- Duration if you keep it -->
                             <TextBlock Text="{Binding Duration, StringFormat=Duration: {0:%d}d {0:hh\\:mm}}" 
                                        Foreground="#77FF77"/>
+                            <Button Content="DELETE"
+        Margin="6,8,0,0"
+        Padding="10,6"
+        MinWidth="100"
+        Click="DeleteArchived_Click"
+        HorizontalAlignment="Right">
+                                <Button.Visibility>
+                                    <MultiBinding Converter="{StaticResource OwnerVis}">
+                                        <!-- 1) owner on the row -->
+                                        <Binding Path="CreatedBy"/>
+                                        <!-- 2) current user exposed by the window -->
+                                        <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="CurrentCommander"/>
+                                    </MultiBinding>
+                                </Button.Visibility>
+                            </Button>
+
                         </StackPanel>
                     </Border>
                 </DataTemplate>

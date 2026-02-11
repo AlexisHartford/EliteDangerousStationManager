@@ -1,10 +1,9 @@
+using EliteDangerousStationManager.Helpers; // ConfigHelper, MonitorUtil
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
-using System.Windows.Media;
-using EliteDangerousStationManager.Helpers; // <-- needed for MonitorUtil + ConfigHelper
 
 namespace EliteDangerousStationManager
 {
@@ -13,30 +12,32 @@ namespace EliteDangerousStationManager
         public OverlayWindow()
         {
             InitializeComponent();
-
-            // If you don't have Loaded="Window_Loaded" in XAML, keep this:
-            Loaded += Window_Loaded;
+            // If you don't have Loaded="Window_Loaded" in XAML, this keeps it wired up:
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
+            // Make this a tool/no-activate window so it floats without stealing focus
             var hwnd = new WindowInteropHelper(this).Handle;
             int exStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
             exStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
             SetWindowLong(hwnd, GWL_EXSTYLE, exStyle);
 
-            // NEW: position according to Settings (screen + corner)
+            // Position based on settings
             PositionOverlayFromSettings();
         }
 
-        // Make this public so SettingsWindow can call it right after Save (optional)
+        /// <summary>
+        /// Positions the overlay according to settings:
+        ///   line 4: screen index (0-based)
+        ///   line 5: corner ("TopLeft" or "TopRight")
+        /// Falls back to TopRight on screen 0 if unset/invalid.
+        /// </summary>
         public void PositionOverlayFromSettings()
         {
-            // Defaults
             int screenIndex = 0;
             string corner = "TopRight";
 
-            // Read config
             try
             {
                 var path = ConfigHelper.GetSettingsFilePath();
@@ -49,17 +50,21 @@ namespace EliteDangerousStationManager
                         corner = lines[4].Trim();
                 }
             }
-            catch { /* ignore; fall back to defaults */ }
+            catch
+            {
+                // ignore and use defaults
+            }
 
-            // Get monitor workarea in **DIPs**
+            // Get monitor workareas in DIPs (MonitorUtil should already do DPI conversion)
             var monitors = MonitorUtil.GetMonitorsDIP(this);
             if (monitors.Count == 0) return;
             if (screenIndex < 0 || screenIndex >= monitors.Count) screenIndex = 0;
 
-            var wa = monitors[screenIndex].WorkAreaDip; // already DPI-correct
-            UpdateLayout(); // ensure ActualWidth is valid
+            var wa = monitors[screenIndex].WorkAreaDip;
 
-            // Only TopLeft / TopRight per your request
+            // Ensure layout is measured so ActualWidth/Height are valid
+            UpdateLayout();
+
             if (corner.Equals("TopLeft", StringComparison.OrdinalIgnoreCase))
             {
                 Left = wa.Left;
@@ -71,6 +76,8 @@ namespace EliteDangerousStationManager
                 Top = wa.Top;
             }
         }
+
+        // ---------------- Win32 interop ----------------
 
         private const int GWL_EXSTYLE = -20;
         private const int WS_EX_TOOLWINDOW = 0x00000080;

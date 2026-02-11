@@ -1,17 +1,102 @@
 ﻿<Window x:Class="EliteDangerousStationManager.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Elite Dangerous Station Manager | Colonial Operations Command" 
-        Height="900" Width="1400"
+        xmlns:scm="clr-namespace:System.ComponentModel;assembly=WindowsBase"
+        xmlns:conv="clr-namespace:EliteDangerousStationManager.Converters"
+        Title="Elite Dangerous Station Manager | Colonial Operations Command"
+        Width="780" Height="600"
         Background="#FF0A0A0A"
-        WindowStartupLocation="CenterScreen" Icon="/file_00000000b05c622f99b88bdc0c151db8.ico">
+        WindowStartupLocation="CenterScreen"
+        Icon="/file_00000000b05c622f99b88bdc0c151db8.ico"
+        SizeToContent="Manual" WindowStyle="ThreeDBorderWindow">
 
+    <!-- ========= Resources ========= -->
     <Window.Resources>
+        <conv:WidthToOrientationConverter x:Key="WidthToOrientation" Threshold="520"/>
+        <conv:WidthToVisibilityConverter  x:Key="WidthToVisibility"  Threshold="520" CollapseWhenLessThan="True"/>
+
+
+
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
+        <!-- Materials view w/ sort + group -->
+        <CollectionViewSource x:Key="MaterialsView" Source="{Binding CurrentProjectMaterials}">
+            <CollectionViewSource.SortDescriptions>
+                <scm:SortDescription PropertyName="CategoryOrderIndex" Direction="Ascending"/>
+                <scm:SortDescription PropertyName="Material" Direction="Ascending"/>
+            </CollectionViewSource.SortDescriptions>
+            <CollectionViewSource.GroupDescriptions>
+                <PropertyGroupDescription PropertyName="Category"/>
+            </CollectionViewSource.GroupDescriptions>
+        </CollectionViewSource>
+
         <!-- Styles -->
         <Style x:Key="HeaderTextStyle" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{DynamicResource HighlightBrush}"/>
             <Setter Property="FontWeight" Value="Bold"/>
-            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="FontSize" Value="14"/>
+        </Style>
+
+        <!-- Dark TextBox -->
+        <Style x:Key="DarkTextBox" TargetType="TextBox">
+            <Setter Property="Background" Value="#121212"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CaretBrush" Value="White"/>
+            <Setter Property="SelectionBrush" Value="{DynamicResource HighlightBrush}"/>
+            <Setter Property="BorderBrush" Value="#333333"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8,4"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
+                            <ScrollViewer x:Name="PART_ContentHost"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter Property="BorderBrush" Value="{DynamicResource HighlightBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ToggleButtonStyle" TargetType="ToggleButton">
+            <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#FFFF8B35"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Background" Value="#FFCC5528"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter Property="Background" Value="#FF00AAFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <Style x:Key="PanelStyle" TargetType="Border">
@@ -19,24 +104,22 @@
             <Setter Property="BorderBrush" Value="#FF333333"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="CornerRadius" Value="8"/>
-            <Setter Property="Margin" Value="5"/>
+            <Setter Property="Margin" Value="4"/>
         </Style>
 
         <Style x:Key="ButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>
             <Setter Property="Foreground" Value="White"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding" Value="15,8"/>
+            <Setter Property="Padding" Value="10,6"/>
             <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="FontSize" Value="11"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" 
-                                CornerRadius="6" 
-                                Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" 
-                                            VerticalAlignment="Center"/>
+                        <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
@@ -51,22 +134,16 @@
             </Setter>
         </Style>
 
-        <!-- Data Templates -->
+        <!-- Logs template -->
         <DataTemplate x:Key="LogEntryTemplate">
             <Grid Margin="2">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" 
-                          Text="{Binding FormattedTimestamp}" 
-                          Foreground="#FF888888" 
-                          FontFamily="Consolas"
-                          Margin="0,0,10,0"/>
-                <TextBlock Grid.Column="1" 
-                          Text="{Binding Message}" 
-                          FontFamily="Consolas"
-                          TextWrapping="Wrap">
+                <TextBlock Grid.Column="0" Text="{Binding FormattedTimestamp}"
+                           Foreground="#FF888888" FontFamily="Consolas" FontSize="11" Margin="0,0,8,0"/>
+                <TextBlock Grid.Column="1" Text="{Binding Message}" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
                             <Style.Triggers>
@@ -93,68 +170,52 @@
         </DataTemplate>
     </Window.Resources>
 
-    <Grid Margin="20">
+    <!-- ========= Root Layout ========= -->
+    <Grid Margin="10">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" MinHeight="118.503"/>
-            <RowDefinition Height="Auto" MinHeight="57.96"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition/>
-            <RowDefinition Height="0"/>
-            <RowDefinition Height="167.617"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <!-- Header -->
-        <Border Grid.Row="0" Style="{StaticResource PanelStyle}" Padding="20" Margin="5">
+        <Border Grid.Row="0" Style="{StaticResource PanelStyle}" Padding="10" Margin="4">
             <DockPanel LastChildFill="True" VerticalAlignment="Center">
                 <Image Source="/file_00000000b05c622f99b88bdc0c151db8.ico"
-               Width="64" Height="64" 
-               Margin="0,0,20,0"
-               VerticalAlignment="Center"
-               DockPanel.Dock="Left"/>
+                       Width="28" Height="28" Margin="0,0,10,0" VerticalAlignment="Center" DockPanel.Dock="Left"/>
                 <StackPanel HorizontalAlignment="Center">
-                    <TextBlock Text="STATION MANAGER" 
-                       FontSize="36" 
-                       FontWeight="Bold" 
-                       Foreground="{DynamicResource HighlightBrush}"
-                       HorizontalAlignment="Center"/>
-                    <TextBlock Text="COLONIAL OPERATIONS COMMAND" 
-                       FontSize="14" 
-                       Foreground="#FFCCCCCC" 
-                       HorizontalAlignment="Center"/>
+                    <TextBlock Text="STATION MANAGER" FontSize="16" FontWeight="Bold"
+                               Foreground="{DynamicResource HighlightBrush}" HorizontalAlignment="Center"/>
+                    <TextBlock Text="COLONIAL OPERATIONS COMMAND" FontSize="6.5" Foreground="#FFCCCCCC"
+                               HorizontalAlignment="Center"/>
                 </StackPanel>
             </DockPanel>
         </Border>
 
-
-        <!-- Status Bar -->
-        <Border Grid.Row="1" Style="{StaticResource PanelStyle}" Padding="15" Margin="5,5,5,5">
+        <!-- Status -->
+        <Border Grid.Row="1" Style="{StaticResource PanelStyle}" Padding="10" Margin="4">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="0" Orientation="Horizontal">
-                    <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="#FF00FF88" Margin="0,0,10,0"/>
+                    <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="#FF00FF88" Margin="0,0,8,0"/>
                     <TextBlock x:Name="StatusLabel" Text="System Online" Foreground="White"/>
                 </StackPanel>
 
-                <TextBlock Grid.Column="1" 
-                          Text="Database Connected" 
-                          Foreground="White" 
-                          HorizontalAlignment="Center"/>
-
-                <TextBlock Grid.Column="2" 
-                           x:Name="LastUpdateTextBlock"
-                          Text="{Binding LastUpdate, StringFormat='Last Update: {0:HH:mm:ss}'}" 
-                          Foreground="White" 
-                          HorizontalAlignment="Right"/>
+                <TextBlock Grid.Column="1" Text="{Binding DbStatusText}" Foreground="White" Margin="10,0"/>
+                <TextBlock Grid.Column="2" Text="{Binding LastUpdate, StringFormat='Last Update: {0:HH:mm:ss}'}"
+                           Foreground="White" Margin="10,0,0,0"/>
             </Grid>
         </Border>
 
-        <!-- Control Panel -->
-        <Border Grid.Row="2" Style="{StaticResource PanelStyle}" Padding="15" Margin="5,5,5,5">
+        <!-- Controls -->
+        <Border Grid.Row="2" Style="{StaticResource PanelStyle}" Padding="10" Margin="4">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -167,353 +228,325 @@
 
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock x:Name="CommanderNameTextBlock"
-               Text="Commander: (loading...)"
-               Foreground="{DynamicResource HighlightBrush}"
-               FontWeight="Bold"
-               VerticalAlignment="Center"
-               Margin="0,0,10,0" />
-
+                               Text="Commander: (loading...)" Foreground="{DynamicResource HighlightBrush}"
+                               FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
                 </StackPanel>
 
+                <Button Grid.Column="1" x:Name="ToggleOverlayButton" Content="Hide Overlay"
+                        Style="{StaticResource ButtonStyle}" Margin="6,0" Width="100"
+                        Click="ToggleOverlayButton_Click"/>
 
+                <Button Grid.Column="2" Content="View Archive" Style="{StaticResource ButtonStyle}"
+                        Background="#FF00AAFF" Margin="6,0" Click="OpenArchive_Click"/>
 
-                <Button Grid.Column="1"
-                        x:Name="ToggleOverlayButton"
-                        Content="Hide Overlay"
-                        Style="{StaticResource ButtonStyle}" 
-                        Click="ToggleOverlayButton_Click"
-                        Margin="10,0"
-                        Width="110"/>
+                <Button Grid.Column="3" Content="Settings" Style="{StaticResource ButtonStyle}"
+                        Background="#FF00FF88" Margin="6,0" Click="OpenSettings_Click"/>
 
+                <Button Grid.Column="4" Content="Planner" Style="{StaticResource ButtonStyle}"
+                        Background="#FF00FF88" Margin="6,0" Click="OpenPlanner_Click"/>
 
-                <Button Grid.Column="2" 
-                       Content="View Archive" 
-                       Style="{StaticResource ButtonStyle}" 
-                        
-                       Click="OpenArchive_Click"
-                       Background="#FF00AAFF"
-                       Margin="10,0"/>
-
-                <Button Grid.Column="3" 
-                       Content="Settings" 
-                       Style="{StaticResource ButtonStyle}" 
-                       Background="#FF00FF88"
-                       Click="OpenSettings_Click"
-                       Margin="10,0"/>
-
-                <Button Grid.Column="4" 
-                       Content="Planner" 
-                       Style="{StaticResource ButtonStyle}" 
-                       Background="#FF00FF88"
-                       Click="OpenPlanner_Click"
-                       Margin="10,0"/>
+                <ToggleButton Grid.Column="5" x:Name="ToggleLogsButton" Content="Logs"
+                              Style="{StaticResource ToggleButtonStyle}" Margin="6,0" Width="80"/>
             </Grid>
         </Border>
 
-        <!-- Main Content -->
-        <Grid Grid.Row="3" Margin="0,10,0,4">
+        <!-- Main -->
+        <Grid Grid.Row="3" Margin="0,4,0,4">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*" MinWidth="340"/>
+                <ColumnDefinition Width="6"/>
+                <ColumnDefinition Width="*" MinWidth="340"/>
             </Grid.ColumnDefinitions>
 
-            <!-- Left Panel - Cargo and Materials -->
-            <Grid Grid.Column="0" Margin="0,0,10,0">
+            <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                          Background="#22FFFFFF" ShowsPreview="True"
+                          ResizeBehavior="PreviousAndNext" ResizeDirection="Columns"/>
+
+            <!-- Left column -->
+            <Grid Grid.Column="0" VerticalAlignment="Stretch">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="83*"/>
-                    <RowDefinition Height="122*"/>
+                    <RowDefinition Height="151*"/>
+                    <RowDefinition Height="243*"/>
                 </Grid.RowDefinitions>
 
-                <!-- Cargo Panel -->
-                <!-- Cargo Panel -->
-                <Border Grid.Row="0" Style="{StaticResource PanelStyle}" Margin="0,0,0,5">
-                    <Grid>
+                <!-- Carrier Transferred -->
+                <Border Grid.Row="0" Style="{StaticResource PanelStyle}" Margin="0,0,0,4">
+                    <Grid VerticalAlignment="Stretch">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
-                        <Border Grid.Row="0" Background="{DynamicResource HighlightOverlayBrush}" Padding="15">
+
+                        <Border Grid.Row="0" Background="{DynamicResource HighlightOverlayBrush}" Padding="8">
                             <Grid>
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition />
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-
-                                <TextBlock Text="CARRIER TRANSFERRED" 
-                   Style="{StaticResource HeaderTextStyle}" 
-                   VerticalAlignment="Center" />
-
-                                <Button Grid.Column="1"
-                Content="Reset"
-                Style="{StaticResource ButtonStyle}"
-                Margin="10,0,0,0"
-                VerticalAlignment="Bottom"
-                Click="RefreshCargoButton_Click"/>
+                                <TextBlock Text="CARRIER TRANSFERRED" Style="{StaticResource HeaderTextStyle}" VerticalAlignment="Center"/>
+                                <Button Grid.Column="1" Content="Reset" Style="{StaticResource ButtonStyle}" Margin="8,0,0,0"
+                                        VerticalAlignment="Center" Click="ResetCarrierTransferred_Click"/>
                             </Grid>
                         </Border>
 
-
-                        <DataGrid Grid.Row="1" 
-                  ItemsSource="{Binding CarrierMaterialOverview}"
-                  Background="Transparent"
-                  Foreground="White"
-                  GridLinesVisibility="Horizontal"
-                  HorizontalGridLinesBrush="#FF333333"
-                  HeadersVisibility="Column"
-                  AutoGenerateColumns="False"
-                  IsReadOnly="True"
-                  Margin="10">
+                        <DataGrid Grid.Row="1"
+                                  ItemsSource="{Binding CarrierMaterialOverview}"
+                                  Background="Transparent" Foreground="White"
+                                  GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#FF333333"
+                                  HeadersVisibility="Column" AutoGenerateColumns="False" IsReadOnly="True"
+                                  Margin="8" SelectionMode="Single" SelectionUnit="FullRow"
+                                  CanUserSortColumns="False" CanUserResizeColumns="False" CanUserReorderColumns="False"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="Material" Binding="{Binding Name}" Width="*" />
-                                <DataGridTextColumn Header="Transferred" Binding="{Binding Transferred}" Width="*" />
-                                <DataGridTextColumn Header="Still Needed" Binding="{Binding StillNeeded}" Width="*" />
+                                <DataGridTextColumn Header="Material" Binding="{Binding Name}" Width="*"/>
+                                <DataGridTextColumn Header="Transferred" Binding="{Binding Transferred}" Width="100"/>
                             </DataGrid.Columns>
-                        
-
-                        <!-- Apply same header style as Required Materials -->
                             <DataGrid.ColumnHeaderStyle>
                                 <Style TargetType="DataGridColumnHeader">
                                     <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>
                                     <Setter Property="Foreground" Value="White"/>
                                     <Setter Property="FontWeight" Value="Bold"/>
-                                    <Setter Property="Padding" Value="10"/>
+                                    <Setter Property="Padding" Value="8"/>
+                                    <Setter Property="FontSize" Value="12"/>
                                 </Style>
                             </DataGrid.ColumnHeaderStyle>
-
-                            <!-- Apply same row hover style as Required Materials -->
-                            <DataGrid.RowStyle>
-                                <Style TargetType="DataGridRow">
-                                    <Setter Property="Background" Value="Transparent"/>
-                                    <Style.Triggers>
-                                        <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>
-                                        </Trigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </DataGrid.RowStyle>
                         </DataGrid>
                     </Grid>
                 </Border>
 
-                <!-- Materials Panel -->
-                <Border Grid.Row="1" Style="{StaticResource PanelStyle}" Margin="0,5,0,0">
-                    <Grid>
+                <!-- Required Materials -->
+                <Border Grid.Row="1" Style="{StaticResource PanelStyle}" Margin="0,4,0,0">
+                    <Grid VerticalAlignment="Stretch">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
 
-                        <Border Grid.Row="0" 
-                Background="{DynamicResource HighlightOverlayBrush}" 
-                Padding="15">
-                            <TextBlock Text="REQUIRED MATERIALS"  Style="{StaticResource HeaderTextStyle}"/>
+                        <Border Grid.Row="0" Background="{DynamicResource HighlightOverlayBrush}" Padding="8">
+                            <TextBlock Text="REQUIRED MATERIALS" Style="{StaticResource HeaderTextStyle}"/>
                         </Border>
 
-                        <DataGrid Grid.Row="1" 
-                  ItemsSource="{Binding CurrentProjectMaterials}"
-                  Background="Transparent"
-                  Foreground="White"
-                  GridLinesVisibility="Horizontal"
-                  HorizontalGridLinesBrush="#FF333333"
-                  HeadersVisibility="Column"
-                  AutoGenerateColumns="False"
-                  IsReadOnly="True"
-                  Margin="10">
+                        <DataGrid Grid.Row="1" x:Name="MaterialsDataGrid"
+                                  ItemsSource="{Binding Source={StaticResource MaterialsView}}"
+                                  Background="Transparent" Foreground="White"
+                                  GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#FF333333"
+                                  HeadersVisibility="Column" AutoGenerateColumns="False" IsReadOnly="True"
+                                  CanUserSortColumns="False" CanUserResizeColumns="False" CanUserReorderColumns="False"
+                                  SelectionMode="Single" SelectionUnit="FullRow" IsTabStop="False"
+                                  Margin="8" EnableColumnVirtualization="True"
+                                  VirtualizingPanel.IsVirtualizing="True"
+                                  VirtualizingPanel.VirtualizationMode="Recycling"
+                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+                            <DataGrid.Resources>
+                                <Style TargetType="{x:Type DataGridRow}">
+                                    <Setter Property="IsHitTestVisible" Value="False"/>
+                                    <Setter Property="Focusable" Value="False"/>
+                                </Style>
+                                <Style TargetType="{x:Type DataGridCell}">
+                                    <Setter Property="IsHitTestVisible" Value="False"/>
+                                    <Setter Property="Focusable" Value="False"/>
+                                </Style>
+                            </DataGrid.Resources>
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="Material" Binding="{Binding Material}" Width="*"/>
-                                <DataGridTextColumn Header="Needed" Binding="{Binding Needed}" Width="80"/>
-                                <DataGridTextColumn Header="Required" Binding="{Binding Required}" Width="80"/>
-                                <DataGridTextColumn Header="Provided" Binding="{Binding Provided}" Width="80"/>
+                                <DataGridTextColumn Header="Material" Binding="{Binding Material}" Width="*" MinWidth="140"/>
+                                <DataGridTextColumn Header="Needed"   Binding="{Binding Needed}" Width="Auto" MinWidth="80"/>
                             </DataGrid.Columns>
                             <DataGrid.ColumnHeaderStyle>
                                 <Style TargetType="DataGridColumnHeader">
                                     <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>
                                     <Setter Property="Foreground" Value="White"/>
                                     <Setter Property="FontWeight" Value="Bold"/>
-                                    <Setter Property="Padding" Value="10"/>
+                                    <Setter Property="Padding" Value="8"/>
+                                    <Setter Property="FontSize" Value="12"/>
                                 </Style>
                             </DataGrid.ColumnHeaderStyle>
-                            <DataGrid.RowStyle>
-                                <Style TargetType="DataGridRow">
-                                    <Setter Property="Background" Value="Transparent"/>
-                                    <Style.Triggers>
-                                        <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter Property="Background" Value="{DynamicResource HighlightBrush}"/>
-                                        </Trigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </DataGrid.RowStyle>
+                            <DataGrid.GroupStyle>
+                                <GroupStyle>
+                                    <GroupStyle.HeaderTemplate>
+                                        <DataTemplate>
+                                            <Border Background="{DynamicResource HighlightOverlayBrush}" Padding="6" Margin="0,6,0,0">
+                                                <TextBlock Text="{Binding Name}" Foreground="{DynamicResource HighlightBrush}" FontWeight="Bold"/>
+                                            </Border>
+                                        </DataTemplate>
+                                    </GroupStyle.HeaderTemplate>
+                                </GroupStyle>
+                            </DataGrid.GroupStyle>
                         </DataGrid>
                     </Grid>
                 </Border>
             </Grid>
 
-            <!-- Right Panel - Projects -->
-            <Border Grid.Column="1" Style="{StaticResource PanelStyle}" Margin="10,0,0,0">
-                <Grid>
+            <!-- Right column: Projects -->
+            <Border Grid.Column="2" Style="{StaticResource PanelStyle}" Margin="4,0,0,0" VerticalAlignment="Stretch">
+                <Grid VerticalAlignment="Stretch">
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <Border Grid.Row="0" 
-                           Background="{DynamicResource HighlightOverlayBrush}"
-                           Padding="15">
+                    <Border Grid.Row="0" Background="{DynamicResource HighlightOverlayBrush}" Padding="8">
                         <TextBlock Text="CONSTRUCTION PROJECTS" Style="{StaticResource HeaderTextStyle}"/>
                     </Border>
-                    <StackPanel Orientation="Horizontal" 
-                        HorizontalAlignment="Right" 
-                        Margin="10">
-                        <TextBox x:Name="SearchBox" Width="200" TextChanged="SearchBox_TextChanged"/>
-                        <ComboBox x:Name="SearchMode" Width="120" SelectedIndex="1" Margin="5,0,0,0">
+
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="8,4,8,4">
+                        <TextBox x:Name="SearchBox" Width="170" Height="22" Style="{StaticResource DarkTextBox}"
+                                 TextChanged="SearchBox_TextChanged" FontSize="10"/>
+                        <ComboBox x:Name="SearchMode" Width="120" Height="22" SelectedIndex="1" Margin="6,0,0,0">
                             <ComboBoxItem Content="Project Name"/>
                             <ComboBoxItem Content="Created By"/>
                             <ComboBoxItem Content="System Name"/>
                         </ComboBox>
                     </StackPanel>
 
-                    <ListBox Grid.Row="1"
-                            x:Name="ProjectsListBox"
-                            ItemsSource="{Binding Projects}"
-                            Background="Transparent"
-                            BorderThickness="0"
-                            SelectionMode="Extended"
-                            Margin="10">
+                    <ListBox Grid.Row="2" x:Name="ProjectsListBox" ItemsSource="{Binding Projects}"
+                             Background="Transparent" BorderThickness="0" SelectionMode="Extended" Margin="8"
+                             ScrollViewer.CanContentScroll="False" ScrollViewer.PanningMode="Both"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto" Loaded="ProjectsListBox_Loaded">
+
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <VirtualizingStackPanel IsVirtualizing="True" VirtualizationMode="Recycling" ScrollUnit="Pixel"/>
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+
                         <ListBox.ItemTemplate>
                             <DataTemplate>
-                                <Border BorderBrush="#FF333333"
-                                    BorderThickness="1"
-                                    CornerRadius="6"
-                                    Padding="15"
-                                    Margin="0,5"
-                                    SnapsToDevicePixels="True">
-                                    <Border.Effect>
-                                        <MultiBinding Converter="{StaticResource ProjectGlowEffectConverter}">
-                                            <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="SelectedProjects"/>
-                                            <Binding />
-                                        </MultiBinding>
-                                    </Border.Effect>
-
+                                <!-- Name the card so we can bind to its ActualWidth -->
+                                <Border x:Name="Card"
+            BorderBrush="#FF333333"
+            BorderThickness="1"
+            CornerRadius="6"
+            Padding="12"
+            Margin="0,6"
+            SnapsToDevicePixels="True">
                                     <Border.Background>
-                                        <SolidColorBrush Color="#0A0A0A" />
+                                        <SolidColorBrush Color="#0A0A0A"/>
                                     </Border.Background>
 
                                     <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"  MinWidth="220"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
 
+                                        <!-- LEFT: info -->
                                         <StackPanel Grid.Column="0">
-                                            <TextBlock x:Name="StationNameTextBlock"
-           Text="{Binding StationName}" 
-           FontWeight="Bold" 
-           FontSize="14"
-           Foreground="White"/>
-                                            
-                                            <TextBlock Text="{Binding SystemName}" 
-                   Foreground="#FF888888" 
-                   FontSize="12" 
-                   Margin="0,2,0,0"/>
-                                            <TextBlock Text="{Binding MarketId, StringFormat='Market ID: {0}'}" 
-                   Foreground="#FF888888" 
-                   FontSize="10" 
-                   Margin="0,2,0,0"/>
-                                            <TextBlock Text="{Binding CreatedBy, StringFormat='Created By: {0}'}" 
-                   Foreground="#FFAAAAAA" 
-                   FontSize="10" 
-                   Margin="0,2,0,0"/>
-                                            <TextBlock Text="{Binding CreatedAt, StringFormat='Created: {0:yyyy-MM-dd HH:mm}'}"
-                   Foreground="#FF666666"
-                   FontSize="10"
-                   Margin="0,2,0,0"/>
-                                            <TextBlock Text="{Binding Source}" 
-                   Foreground="{Binding Source, Converter={StaticResource SourceColorConverter}}" 
-                   FontSize="10" 
-                   FontWeight="Bold"
-                   Margin="0,2,0,0"/>
+                                            <TextBlock Text="{Binding StationName}" FontWeight="Bold" FontSize="13">
+                                                <TextBlock.Style>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="Foreground" Value="White"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Value="True"
+                               Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}">
+                                                                <Setter Property="Foreground" Value="LimeGreen"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </TextBlock.Style>
+                                            </TextBlock>
 
+                                            <TextBlock Text="{Binding SystemName}" Foreground="#FF888888" FontSize="11" Margin="0,2,0,0"/>
+                                            <TextBlock Text="{Binding MarketId, StringFormat='Market ID: {0}'}" Foreground="#FF888888" FontSize="10" Margin="0,2,0,0"/>
+                                            <TextBlock Text="{Binding CreatedBy, StringFormat='Created By: {0}'}" Foreground="#FFAAAAAA" FontSize="10" Margin="0,2,0,0"/>
+                                            <TextBlock Text="{Binding CreatedAt, StringFormat='Created: {0:yyyy-MM-dd HH:mm}'}" Foreground="#FF666666" FontSize="10" Margin="0,2,0,0"/>
+                                            <TextBlock Text="{Binding Source}" Foreground="{Binding Source, Converter={StaticResource SourceColorConverter}}" FontSize="10" FontWeight="Bold" Margin="0,2,0,0"/>
                                         </StackPanel>
 
-                                        <Button Grid.Column="1"
-                                            Style="{StaticResource ButtonStyle}" 
-                                            FontSize="10" 
-                                            Height="35"
-                                            Padding="10,5"
-                                            Click="SelectProjectButton_Click">
-                                            <Button.Content>
-                                                <MultiBinding Converter="{StaticResource ProjectSelectTextConverter}">
-                                                    <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="SelectedProjects"/>
-                                                    <Binding />
-                                                </MultiBinding>
-                                            </Button.Content>
-                                        </Button>
+                                        <!-- RIGHT: buttons – automatically switch H/V based on Card.ActualWidth -->
+                                        <WrapPanel Grid.Column="1"
+                   Orientation="{Binding ElementName=Card, Path=ActualWidth, Converter={StaticResource WidthToOrientation}, ConverterParameter=520}"
+                   
+                   HorizontalAlignment="Right">
 
+                                            <!-- Completed -->
+                                            <Button Content="Completed"
+                  Style="{StaticResource ButtonStyle}"
+                  FontSize="10" Height="30" MinWidth="96" Padding="8,4"
+                  Click="CompletedProjectButton_Click" Margin="8,0,0,8"
+                  DataContext="{Binding}">
+                                                <Button.Visibility>
+                                                    <MultiBinding Converter="{StaticResource CreatorVisibilityConverter}">
+                                                        <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="CommanderName"/>
+                                                        <Binding Path="CreatedBy"/>
+                                                    </MultiBinding>
+                                                </Button.Visibility>
+                                            </Button>
 
+                                            <!-- DELETE -->
+                                            <Button Content="DELETE"
+                  Style="{StaticResource ButtonStyle}"
+                  FontSize="10" Height="30" MinWidth="86" Padding="8,4"
+                  Click="OwnerProjectButton_Click" Margin="8,0,0,8"
+                  DataContext="{Binding}">
+                                                <Button.Visibility>
+                                                    <MultiBinding Converter="{StaticResource CreatorVisibilityConverter}">
+                                                        <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="CommanderName"/>
+                                                        <Binding Path="CreatedBy"/>
+                                                    </MultiBinding>
+                                                </Button.Visibility>
+                                            </Button>
 
+                                            <!-- Select / Unselect -->
+                                            <Button FontSize="10" Height="30" MinWidth="86" Padding="8,4"
+                  Click="SelectProjectButton_Click" Margin="8,0,0,8">
+                                                <Button.Style>
+                                                    <Style TargetType="Button" BasedOn="{StaticResource ButtonStyle}">
+                                                        <Setter Property="Content" Value="Select"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                <Setter Property="Content" Value="Unselect"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                            </Button>
 
-                                        <Button Grid.Column="2"
-                                            Content="DELETE"
-                                            Style="{StaticResource ButtonStyle}"
-                                            FontSize="10"
-                                            Height="35"
-                                            Padding="10,5"
-                                            Click="OwnerProjectButton_Click"
-                                            DataContext="{Binding}">
-                                            <Button.Visibility>
-                                                <MultiBinding Converter="{StaticResource CreatorVisibilityConverter}">
-                                                    <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="CommanderName"/>
-                                                    <Binding Path="CreatedBy"/>
-                                                </MultiBinding>
-                                            </Button.Visibility>
-                                        </Button>
-                                    <Button Grid.Column="3"
-                                        Content="Completed"
-                                        Style="{StaticResource ButtonStyle}"
-                                        FontSize="10"
-                                        Height="35"
-                                        Padding="10,5"
-                                        Click="CompletedProjectButton_Click"
-                                        DataContext="{Binding}">
-                                        <Button.Visibility>
-                                            <MultiBinding Converter="{StaticResource CreatorVisibilityConverter}">
-                                                <Binding RelativeSource="{RelativeSource AncestorType=Window}" Path="CommanderName"/>
-                                                <Binding Path="CreatedBy"/>
-                                            </MultiBinding>
-                                        </Button.Visibility>
-                                    </Button>
-                                        <Button Grid.Column="4"
-                                            Content="⇪ Sync"
-                                            Style="{StaticResource ButtonStyle}"
-                                            FontSize="10"
-                                            Height="35"
-                                            Padding="10,5"
-                                            Background="#FF00AAFF"
-                                            Click="SyncProjectButton_Click"
-                                            DataContext="{Binding}">
-                                            <Button.Visibility>
-                                                <Binding Path="Source" Converter="{StaticResource LocalOnlyVisibilityConverter}" />
-                                            </Button.Visibility>
-                                        </Button>
+                                            <!-- ⇪ Sync -->
+                                            <Button Content="⇪ Sync"
+                  Style="{StaticResource ButtonStyle}"
+                  FontSize="10" Height="30" MinWidth="86" Padding="8,4"
+                  Background="#FF00AAFF"
+                  Click="SyncProjectButton_Click" Margin="8,0,0,8"
+                  DataContext="{Binding}">
+                                                <Button.Visibility>
+                                                    <Binding Path="Source" Converter="{StaticResource LocalOnlyVisibilityConverter}" />
+                                                </Button.Visibility>
+                                            </Button>
 
+                                        </WrapPanel>
                                     </Grid>
                                 </Border>
-                                <DataTemplate.Triggers>
-                                    <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                                        <Setter TargetName="StationNameTextBlock" Property="Foreground" Value="LimeGreen"/>
-                                    </DataTrigger>
-                                </DataTemplate.Triggers>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
+
                         <ListBox.ItemContainerStyle>
                             <Style TargetType="ListBoxItem">
+                                <Setter Property="Focusable" Value="False"/>
+                                <EventSetter Event="PreviewMouseLeftButtonDown" Handler="ListBoxItem_PreviewMouseLeftButtonDown"/>
+                                <EventSetter Event="RequestBringIntoView" Handler="ListBoxItem_RequestBringIntoView"/>
                                 <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <Setter Property="BorderThickness" Value="1"/>
+                                <Setter Property="BorderBrush" Value="#30FFFFFF"/>
                                 <Setter Property="Template">
                                     <Setter.Value>
                                         <ControlTemplate TargetType="ListBoxItem">
-                                            <ContentPresenter/>
+                                            <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                                    CornerRadius="6" SnapsToDevicePixels="True">
+                                                <ContentPresenter/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="Bd" Property="Background" Value="#15000000"/>
+                                                </Trigger>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HighlightOverlayBrush}"/>
+                                                    <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource HighlightBrush}"/>
+                                                    <Setter Property="BorderThickness" Value="2"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
                                         </ControlTemplate>
                                     </Setter.Value>
                                 </Setter>
@@ -524,41 +557,25 @@
             </Border>
         </Grid>
 
-        <!-- Log Panel -->
-        <Border Grid.Row="5" Style="{StaticResource PanelStyle}" Margin="0,10,0,0">
+        <!-- Logs (collapsible) -->
+        <Border Grid.Row="4" x:Name="LogsPanel" Style="{StaticResource PanelStyle}" Margin="0,4,0,0"
+                Visibility="{Binding IsChecked, ElementName=ToggleLogsButton, Converter={StaticResource BoolToVis}}">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="100"/>
+                    <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <Border Grid.Row="0" 
-                       Background="{DynamicResource HighlightOverlayBrush}" 
-                       Padding="15">
+                <Border Grid.Row="0" Background="{DynamicResource HighlightOverlayBrush}" Padding="10">
                     <TextBlock Text="SYSTEM LOGS" Style="{StaticResource HeaderTextStyle}"/>
                 </Border>
 
-                <ListBox Grid.Row="1" 
-                        ItemsSource="{Binding LogEntries}"
-                        ItemTemplate="{StaticResource LogEntryTemplate}"
-                        Background="#FF050505"
-                        BorderThickness="0"
-                        ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                        ScrollViewer.VerticalScrollBarVisibility="Auto"
-                        Padding="10">
-                    <ListBox.ItemContainerStyle>
-                        <Style TargetType="ListBoxItem">
-                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="ListBoxItem">
-                                        <ContentPresenter Margin="0,1"/>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                        </Style>
-                    </ListBox.ItemContainerStyle>
-                </ListBox>
+                <ListBox Grid.Row="1" ItemsSource="{Binding LogEntries}"
+                         ItemTemplate="{StaticResource LogEntryTemplate}"
+                         Background="#FF050505" BorderThickness="0"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         Margin="6" Padding="8" MaxHeight="200"/>
             </Grid>
         </Border>
     </Grid>
